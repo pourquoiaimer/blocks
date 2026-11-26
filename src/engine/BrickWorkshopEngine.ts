@@ -96,7 +96,9 @@ function detectSoftwareWebGL(): boolean {
     const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
     if (!gl) return true;
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
-    const param = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.RENDERER;
+    const param = ext
+      ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)
+      : gl.getParameter(gl.RENDERER);
     const gpu = String(param || '');
     gl.getExtension('WEBGL_lose_context')?.loseContext();
     return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
@@ -142,6 +144,7 @@ export class BrickWorkshopEngine {
   private accPhysics = 0;
 
   private bricks: BrickInstance[] = [];
+  private brickMeshes: THREE.Mesh[] = [];
   private seq = 0;
   private uf = new Map<BrickInstance, BrickInstance>();
   private boxOpened = false;
@@ -279,10 +282,10 @@ export class BrickWorkshopEngine {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
-    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 1.5));
+    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 1.35));
     this.renderer.setSize(w, h);
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     const canvas = this.renderer.domElement;
     canvas.style.display = 'block';
@@ -356,7 +359,26 @@ export class BrickWorkshopEngine {
     }
 
     if (!this.isSoftwareGl) {
+      // Pre-compile all brick material variants at startup so first pack/hover/snap never hitches
+      const warmGroup = new THREE.Group();
+      const warmGeo = brickGeometry('1x1').geo;
+      for (const map of [
+        this.baseMaterials,
+        this.placedMaterials,
+        this.hoverPoolMaterials,
+        this.hoverPressedMaterials,
+      ]) {
+        for (const mat of map.values()) {
+          const m = new THREE.Mesh(warmGeo, mat);
+          m.castShadow = true;
+          m.receiveShadow = true;
+          m.position.set(0, -100, 0);
+          warmGroup.add(m);
+        }
+      }
+      this.scene.add(warmGroup);
       this.renderer.compile(this.scene, this.camera);
+      this.scene.remove(warmGroup);
     }
 
     this.emitSnapshot();
@@ -365,30 +387,19 @@ export class BrickWorkshopEngine {
   }
 
   private initMaterialLibrary(): void {
-    const makeMat = (hex: number, roughness: number, emissive: number): THREE.MeshStandardMaterial => {
-      if (this.isSoftwareGl) {
-        return new THREE.MeshStandardMaterial({
-          color: hex,
-          roughness,
-          metalness: 0.02,
-          emissive,
-        });
-      }
-      return new THREE.MeshPhysicalMaterial({
+    const makeMat = (hex: number, roughness: number, emissive: number): THREE.MeshStandardMaterial =>
+      new THREE.MeshStandardMaterial({
         color: hex,
         roughness,
-        metalness: 0.02,
-        clearcoat: 0.46,
-        clearcoatRoughness: 0.22,
-        reflectivity: 0.65,
+        metalness: 0.04,
+        envMapIntensity: this.isSoftwareGl ? 0.35 : 0.72,
         emissive,
       });
-    };
 
     this.palette.forEach((def, idx) => {
       const hex = def.hex ?? 0xeceff2;
       const isDark = hex < 0x353535;
-      const roughness = isDark ? 0.44 : 0.30;
+      const roughness = isDark ? 0.42 : 0.28;
       this.baseMaterials.set(idx, makeMat(hex, roughness, 0x000000));
       this.placedMaterials.set(idx, makeMat(hex, roughness, 0x1f3644));
       this.hoverPoolMaterials.set(idx, makeMat(hex, roughness, 0x1d4a5e));
@@ -437,7 +448,7 @@ export class BrickWorkshopEngine {
     this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
     this.world.timestep = 1 / 60;
     try {
-      this.world.integrationParameters.numSolverIterations = 4;
+      this.world.integrationParameters.numSolverIterations = 3;
     } catch {
       // ignore if unsupported
     }
@@ -1176,6 +1187,7 @@ export class BrickWorkshopEngine {
     };
     mesh.userData.brick = brick;
     this.bricks.push(brick);
+    this.brickMeshes.push(mesh);
     return brick;
   }
 
@@ -1356,7 +1368,7 @@ export class BrickWorkshopEngine {
 
     if (pour.spawnedCount < pour.items.length) {
       pour.spawnAccum += dt;
-      const interval = 0.024;
+      const interval = 0.03;
       while (pour.spawnAccum >= interval && pour.spawnedCount < pour.items.length) {
         pour.spawnAccum -= interval;
         this.spawnPourBrick(pour, pour.items[pour.spawnedCount]);
@@ -1643,12 +1655,9 @@ export class BrickWorkshopEngine {
   }
 
   private pickBrick(): BrickInstance | null {
-    if (this.bricks.length === 0) return null;
+    if (this.brickMeshes.length === 0) return null;
     this.raycaster.setFromCamera(_ndc, this.camera);
-    const hits = this.raycaster.intersectObjects(
-      this.bricks.map(b => b.mesh),
-      false
-    );
+    const hits = this.raycaster.intersectObjects(this.brickMeshes, false);
     return hits.length ? (hits[0].object.userData.brick as BrickInstance) : null;
   }
 
@@ -2441,27 +2450,6 @@ export class BrickWorkshopEngine {
     }, 450);
   }
 
-  private afterDraw(cb: () => void): void {
-    const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    if (!gl?.fenceSync) {
-      this.frameId = window.setTimeout(cb, 80);
-      return;
-    }
-    const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-    gl.flush();
-    const poll = () => {
-      if (this.disposed) return;
-      const status = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
-      if (status === gl.UNSIGNALED) {
-        this.frameId = window.setTimeout(poll, 5);
-      } else {
-        if (sync) gl.deleteSync(sync);
-        this.frameId = window.setTimeout(cb, 80);
-      }
-    };
-    this.frameId = window.setTimeout(poll, 5);
-  }
-
   private tick = (): void => {
     if (this.disposed) return;
     const dt = Math.min(this.clock.getDelta(), 0.05);
@@ -2480,10 +2468,13 @@ export class BrickWorkshopEngine {
 
     this.accPhysics += dt;
     let steps = 0;
-    while (this.accPhysics >= this.world.timestep && steps < 3) {
+    while (this.accPhysics >= this.world.timestep && steps < 2) {
       this.world.step();
       this.accPhysics -= this.world.timestep;
       steps++;
+    }
+    if (this.accPhysics > this.world.timestep * 2) {
+      this.accPhysics = 0;
     }
 
     for (const b of this.bricks) {
@@ -2523,11 +2514,7 @@ export class BrickWorkshopEngine {
       this.callbacks.onFps?.(fps);
     }
 
-    if (this.isSoftwareGl) {
-      this.afterDraw(this.tick);
-    } else {
-      this.frameId = requestAnimationFrame(this.tick);
-    }
+    this.frameId = requestAnimationFrame(this.tick);
   };
 
   public dispose(): void {
@@ -2557,6 +2544,7 @@ export class BrickWorkshopEngine {
       map.clear();
     }
     this.bricks = [];
+    this.brickMeshes = [];
     this.controls?.dispose();
     this.pmremEnv?.dispose();
     if (this.renderer) {

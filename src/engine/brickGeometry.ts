@@ -58,7 +58,7 @@ export function brickGeometry(shapeKey: ShapeKey): CachedBrickGeo {
   }
 
   for (const [x, z] of cells) {
-    const stud = new THREE.CylinderGeometry(STUD_R * 0.96, STUD_R, STUD_H, 12, 1, false);
+    const stud = new THREE.CylinderGeometry(STUD_R * 0.96, STUD_R, STUD_H, 10, 1, false);
     stud.translate(W(x + 0.5) - W(cx), BRICK_H / 2 + STUD_H / 2, W(z + 0.5) - W(cz));
     pushGeo(stud);
   }

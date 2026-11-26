@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import type { ColorDef, PlanBrick } from '../types/brick';
 import { SHAPES, rotCells } from '../engine/brickPlanner';
 
@@ -29,123 +29,136 @@ interface DrawableBrick {
   cells: [number, number][];
 }
 
-export const IsometricStepSvg: React.FC<Props> = ({
-  bricks,
-  prevBricks = [],
-  palette,
-  boardW,
-  boardD,
-  className = '',
-  showAllBright = false,
-}) => {
-  const rendered = useMemo(() => {
-    const unit = 12;
-    const cos30 = 0.8660254;
-    const sin30 = 0.5;
-    const brickPxH = unit * 1.15;
-    const studPxH = unit * 0.24;
+const CANVAS_W = 640;
+const CANVAS_H = 480;
 
-    const proj = (gx: number, gy: number, gz: number): [number, number] => [
-      (gx - gz) * unit * cos30,
-      (gx + gz) * unit * sin30 - gy * brickPxH,
-    ];
+export const IsometricStepSvg: React.FC<Props> = React.memo(
+  ({ bricks, prevBricks = [], palette, boardW, boardD, className = '', showAllBright = false }) => {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
 
-    const list: DrawableBrick[] = [];
-    for (const b of prevBricks) {
-      list.push({
-        brick: b,
-        isCurrent: showAllBright,
-        cells: rotCells(SHAPES[b.shape].cells, b.rot),
+    const sceneData = useMemo(() => {
+      const unit = 12;
+      const cos30 = 0.8660254;
+      const sin30 = 0.5;
+      const brickPxH = unit * 1.15;
+      const studPxH = unit * 0.24;
+
+      const proj = (gx: number, gy: number, gz: number): [number, number] => [
+        (gx - gz) * unit * cos30,
+        (gx + gz) * unit * sin30 - gy * brickPxH,
+      ];
+
+      const list: DrawableBrick[] = [];
+      for (const b of prevBricks) {
+        list.push({
+          brick: b,
+          isCurrent: showAllBright,
+          cells: rotCells(SHAPES[b.shape].cells, b.rot),
+        });
+      }
+      for (const b of bricks) {
+        list.push({
+          brick: b,
+          isCurrent: true,
+          cells: rotCells(SHAPES[b.shape].cells, b.rot),
+        });
+      }
+
+      list.sort((a, b) => {
+        if (a.brick.layer !== b.brick.layer) return a.brick.layer - b.brick.layer;
+        const da = a.brick.gx + a.brick.bb.w * 0.5 + (a.brick.gz + a.brick.bb.d * 0.5);
+        const db = b.brick.gx + b.brick.bb.w * 0.5 + (b.brick.gz + b.brick.bb.d * 0.5);
+        return da - db;
       });
-    }
-    for (const b of bricks) {
-      list.push({
-        brick: b,
-        isCurrent: true,
-        cells: rotCells(SHAPES[b.shape].cells, b.rot),
-      });
-    }
 
-    // Painter's algorithm sort: layer ascending, then (gx + gz) back-to-front
-    list.sort((a, b) => {
-      if (a.brick.layer !== b.brick.layer) return a.brick.layer - b.brick.layer;
-      const da = a.brick.gx + a.brick.bb.w * 0.5 + (a.brick.gz + a.brick.bb.d * 0.5);
-      const db = b.brick.gx + b.brick.bb.w * 0.5 + (b.brick.gz + b.brick.bb.d * 0.5);
-      return da - db;
-    });
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
 
-    // Compute bounding box across base grid + all bricks
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
+      const expand = (x: number, y: number) => {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      };
 
-    const expand = (x: number, y: number) => {
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    };
-
-    // Include board corners for consistent framing
-    for (const [bx, bz] of [
-      [0, 0],
-      [boardW, 0],
-      [boardW, boardD],
-      [0, boardD],
-    ]) {
-      const [px, py] = proj(bx, 0, bz);
-      expand(px, py);
-    }
-
-    for (const item of list) {
-      const { gx, gz, layer, bb } = item.brick;
-      for (const [cx, cy, cz] of [
-        [gx, layer, gz],
-        [gx + bb.w, layer + 1.25, gz + bb.d],
-        [gx + bb.w, layer + 1.25, gz],
-        [gx, layer + 1.25, gz + bb.d],
+      for (const [bx, bz] of [
+        [0, 0],
+        [boardW, 0],
+        [boardW, boardD],
+        [0, boardD],
       ]) {
-        const [px, py] = proj(cx, cy, cz);
+        const [px, py] = proj(bx, 0, bz);
         expand(px, py);
       }
-    }
 
-    const pad = 12;
-    const vbX = (Number.isFinite(minX) ? minX : -60) - pad;
-    const vbY = (Number.isFinite(minY) ? minY : -60) - pad;
-    const vbW = Math.max(80, (Number.isFinite(maxX) ? maxX - minX : 120) + pad * 2);
-    const vbH = Math.max(60, (Number.isFinite(maxY) ? maxY - minY : 100) + pad * 2);
+      for (const item of list) {
+        const { gx, gz, layer, bb } = item.brick;
+        for (const [cx, cy, cz] of [
+          [gx, layer, gz],
+          [gx + bb.w, layer + 1.25, gz + bb.d],
+          [gx + bb.w, layer + 1.25, gz],
+          [gx, layer + 1.25, gz + bb.d],
+        ]) {
+          const [px, py] = proj(cx, cy, cz);
+          expand(px, py);
+        }
+      }
 
-    const basePts = [
-      proj(0, 0, 0),
-      proj(boardW, 0, 0),
-      proj(boardW, 0, boardD),
-      proj(0, 0, boardD),
-    ]
-      .map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`)
-      .join(' ');
+      const pad = 12;
+      const vbX = (Number.isFinite(minX) ? minX : -60) - pad;
+      const vbY = (Number.isFinite(minY) ? minY : -60) - pad;
+      const vbW = Math.max(80, (Number.isFinite(maxX) ? maxX - minX : 120) + pad * 2);
+      const vbH = Math.max(60, (Number.isFinite(maxY) ? maxY - minY : 100) + pad * 2);
 
-    return { list, proj, vbX, vbY, vbW, vbH, basePts, unit, studPxH };
-  }, [bricks, prevBricks, boardW, boardD, showAllBright]);
+      const basePoly = [
+        proj(0, 0, 0),
+        proj(boardW, 0, 0),
+        proj(boardW, 0, boardD),
+        proj(0, 0, boardD),
+      ];
 
-  const { list, proj, vbX, vbY, vbW, vbH, basePts, unit, studPxH } = rendered;
+      return { list, proj, vbX, vbY, vbW, vbH, basePoly, unit, studPxH };
+    }, [bricks, prevBricks, boardW, boardD, showAllBright]);
 
-  return (
-    <svg
-      viewBox={`${vbX.toFixed(1)} ${vbY.toFixed(1)} ${vbW.toFixed(1)} ${vbH.toFixed(1)}`}
-      className={`w-full h-full ${className}`}
-      aria-hidden="true"
-    >
-      {/* 底板輪廓 */}
-      <polygon
-        points={basePts}
-        fill="#151b22"
-        stroke="rgba(159,180,204,0.22)"
-        strokeWidth="0.9"
-      />
+    useEffect(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-      {list.map((item, idx) => {
+      const { list, proj, vbX, vbY, vbW, vbH, basePoly, unit, studPxH } = sceneData;
+      ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+      const scale = Math.min(CANVAS_W / vbW, CANVAS_H / vbH);
+      const offX = (CANVAS_W - vbW * scale) * 0.5 - vbX * scale;
+      const offY = (CANVAS_H - vbH * scale) * 0.5 - vbY * scale;
+
+      ctx.save();
+      ctx.translate(offX, offY);
+      ctx.scale(scale, scale);
+      ctx.lineJoin = 'round';
+
+      const drawPoly = (pts: [number, number][]) => {
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.closePath();
+      };
+
+      // 底板輪廓
+      drawPoly(basePoly);
+      ctx.fillStyle = '#151b22';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(159,180,204,0.22)';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+
+      const rx = unit * 0.28;
+      const ry = unit * 0.16;
+
+      for (const item of list) {
         const b = item.brick;
         const x0 = b.gx;
         const x1 = b.gx + b.bb.w;
@@ -161,7 +174,6 @@ export const IsometricStepSvg: React.FC<Props> = ({
         const strokeColor = item.isCurrent ? '#0c1016' : '#20262e';
         const strokeW = item.isCurrent ? 0.95 : 0.6;
 
-        // 8 vertices of bounding prism (all bricks are 1x1, 1x2, or 1x4 rectangles)
         const tFL = proj(x0, y1, z1);
         const tFR = proj(x1, y1, z1);
         const tBR = proj(x1, y1, z0);
@@ -171,58 +183,63 @@ export const IsometricStepSvg: React.FC<Props> = ({
         const bFR = proj(x1, y0, z1);
         const bBR = proj(x1, y0, z0);
 
-        const topPoly = `${tBL[0].toFixed(1)},${tBL[1].toFixed(1)} ${tBR[0].toFixed(1)},${tBR[1].toFixed(1)} ${tFR[0].toFixed(1)},${tFR[1].toFixed(1)} ${tFL[0].toFixed(1)},${tFL[1].toFixed(1)}`;
-        // Front-left face (+Z): tFL -> tFR -> bFR -> bFL
-        const leftPoly = `${tFL[0].toFixed(1)},${tFL[1].toFixed(1)} ${tFR[0].toFixed(1)},${tFR[1].toFixed(1)} ${bFR[0].toFixed(1)},${bFR[1].toFixed(1)} ${bFL[0].toFixed(1)},${bFL[1].toFixed(1)}`;
-        // Front-right face (+X): tFR -> tBR -> bBR -> bFR
-        const rightPoly = `${tFR[0].toFixed(1)},${tFR[1].toFixed(1)} ${tBR[0].toFixed(1)},${tBR[1].toFixed(1)} ${bBR[0].toFixed(1)},${bBR[1].toFixed(1)} ${bFR[0].toFixed(1)},${bFR[1].toFixed(1)}`;
+        ctx.globalAlpha = item.isCurrent ? 1 : 0.78;
+
+        // Front-left face (+Z)
+        drawPoly([tFL, tFR, bFR, bFL]);
+        ctx.fillStyle = leftColor;
+        ctx.fill();
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = strokeW;
+        ctx.stroke();
+
+        // Front-right face (+X)
+        drawPoly([tFR, tBR, bBR, bFR]);
+        ctx.fillStyle = rightColor;
+        ctx.fill();
+        ctx.stroke();
+
+        // Top face
+        drawPoly([tBL, tBR, tFR, tFL]);
+        ctx.fillStyle = topColor;
+        ctx.fill();
+        ctx.stroke();
+
+        if (item.isCurrent) {
+          ctx.strokeStyle = 'rgba(127,227,255,0.45)';
+          ctx.lineWidth = 0.65;
+          ctx.stroke();
+        }
 
         const studCells = [...item.cells].sort((c1, c2) => c1[0] + c1[1] - (c2[0] + c2[1]));
+        for (const [cx, cz] of studCells) {
+          const [sx, sy] = proj(x0 + cx + 0.5, y1, z0 + cz + 0.5);
+          ctx.fillStyle = leftColor;
+          ctx.strokeStyle = strokeColor;
+          ctx.lineWidth = 0.45;
+          ctx.fillRect(sx - rx, sy - studPxH, rx * 2, studPxH);
+          ctx.strokeRect(sx - rx, sy - studPxH, rx * 2, studPxH);
 
-        return (
-          <g key={`${b.index}_${idx}`} opacity={item.isCurrent ? 1 : 0.78}>
-            <polygon points={leftPoly} fill={leftColor} stroke={strokeColor} strokeWidth={strokeW} strokeLinejoin="round" />
-            <polygon points={rightPoly} fill={rightColor} stroke={strokeColor} strokeWidth={strokeW} strokeLinejoin="round" />
-            <polygon points={topPoly} fill={topColor} stroke={strokeColor} strokeWidth={strokeW} strokeLinejoin="round" />
-            {item.isCurrent && (
-              <polygon
-                points={topPoly}
-                fill="none"
-                stroke="rgba(127,227,255,0.45)"
-                strokeWidth="0.65"
-                strokeLinejoin="round"
-              />
-            )}
-            {studCells.map(([cx, cz], sIdx) => {
-              const [sx, sy] = proj(x0 + cx + 0.5, y1, z0 + cz + 0.5);
-              const rx = unit * 0.28;
-              const ry = unit * 0.16;
-              return (
-                <g key={sIdx}>
-                  <rect
-                    x={sx - rx}
-                    y={sy - studPxH}
-                    width={rx * 2}
-                    height={studPxH}
-                    fill={leftColor}
-                    stroke={strokeColor}
-                    strokeWidth="0.45"
-                  />
-                  <ellipse
-                    cx={sx}
-                    cy={sy - studPxH}
-                    rx={rx}
-                    ry={ry}
-                    fill={topColor}
-                    stroke={strokeColor}
-                    strokeWidth="0.5"
-                  />
-                </g>
-              );
-            })}
-          </g>
-        );
-      })}
-    </svg>
-  );
-};
+          ctx.beginPath();
+          ctx.ellipse(sx, sy - studPxH, rx, ry, 0, 0, Math.PI * 2);
+          ctx.fillStyle = topColor;
+          ctx.fill();
+          ctx.lineWidth = 0.5;
+          ctx.stroke();
+        }
+      }
+
+      ctx.restore();
+    }, [sceneData, palette]);
+
+    return (
+      <canvas
+        ref={canvasRef}
+        width={CANVAS_W}
+        height={CANVAS_H}
+        className={`w-full h-full object-contain ${className}`}
+        aria-hidden="true"
+      />
+    );
+  }
+);

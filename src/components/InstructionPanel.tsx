@@ -40,7 +40,7 @@ export const LayerGridDiagram: React.FC<{
   layer: number;
   plan: PlanBrick[];
   model: BrickModel;
-}> = ({ layer, plan, model }) => {
+}> = React.memo(({ layer, plan, model }) => {
   const { cells } = useMemo(() => {
     const Wd = model.board.w;
     const Ht = model.board.d;
@@ -141,7 +141,7 @@ export const LayerGridDiagram: React.FC<{
       ))}
     </div>
   );
-};
+});
 
 export const InstructionPanel: React.FC<Props> = ({
   model,
