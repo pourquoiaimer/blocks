@@ -37,6 +37,7 @@ export interface BrickInstance {
   cellsWorld: string[] | null;
   snapAnim: number;
   trayIndex: number;
+  pad: 'main' | 'sub';
   offset: THREE.Vector3;
 }
 
@@ -76,7 +77,7 @@ interface ActivePour {
 export interface EngineCallbacks {
   onSnapshot: (snap: WorkshopHudSnapshot) => void;
   onFps?: (fps: number) => void;
-  onAutoSave: (records: SavedBrickRecord[], openedPacks: boolean[]) => void;
+  onAutoSave: (records: SavedBrickRecord[], openedPacks: boolean[], boxOpened: boolean) => void;
   onContextLost: () => void;
 }
 
@@ -143,11 +144,15 @@ export class BrickWorkshopEngine {
   private bricks: BrickInstance[] = [];
   private seq = 0;
   private uf = new Map<BrickInstance, BrickInstance>();
+  private boxOpened = false;
+  private boxOpening = false;
+  private boxOpenAnim = 0;
   private openedPacks: boolean[] = [];
+  private packTrayMap: (number | null)[] = [];
 
   private trays: TrayZone[] = [];
   private activeTray = 0;
-  private viewKey: 'build' | 'wide' | 'tray' = 'build';
+  private viewKey: 'build' | 'wide' | 'tray' | 'subpad' = 'build';
   private camTween: {
     p0: THREE.Vector3;
     t0: THREE.Vector3;
@@ -160,17 +165,31 @@ export class BrickWorkshopEngine {
   private bZ0 = 0;
   private padCx = 0;
   private padCz = 0;
+  private subX0 = 0;
+  private subZ0 = 0;
+  private subPadCx = 0;
+  private subPadCz = 0;
   private boardW = 16;
   private boardD = 12;
 
+  private subAssemblyEnabled = false;
+  private subPadGroup!: THREE.Group;
+  private subPadCollider!: RAPIER.Collider;
+
   private raycaster = new THREE.Raycaster();
+  private ghostMat!: THREE.MeshBasicMaterial;
   private ghostMesh!: THREE.Mesh;
+  private multiGhostGroup = new THREE.Group();
   private dropLine!: THREE.Mesh;
   private dropRing!: THREE.Mesh;
   private guideGroup = new THREE.Group();
   private currentGuideBricks: PlanBrick[] = [];
 
-  // 3D 待拆零件袋 & 傾倒動畫
+  // 3D 外箱、待拆零件袋 & 傾倒動畫
+  private boxGroup: THREE.Group | null = null;
+  private boxFlapLeft: THREE.Mesh | null = null;
+  private boxFlapRight: THREE.Mesh | null = null;
+  private boxPouchesGroup: THREE.Group | null = null;
   private waitingPouchGroup: THREE.Group | null = null;
   private waitingPouchPackIdx: number | null = null;
   private activePour: ActivePour | null = null;
@@ -191,6 +210,7 @@ export class BrickWorkshopEngine {
   private targetPos = new THREE.Vector3();
   private visualPos = new THREE.Vector3();
   private snapValid = false;
+  private snapPad: 'main' | 'sub' = 'main';
   private snapGx = 0;
   private snapGz = 0;
   private snapY = BUILD_TOP_Y;
@@ -201,11 +221,13 @@ export class BrickWorkshopEngine {
   private downWasPlaced = false;
   private downOnTrayFloor: number | null = null;
   private downOnPouch: number | null = null;
+  private downOnBox = false;
   private dragMoved = false;
 
   private fpsAcc = 0;
   private fpsFrames = 0;
   private lastMatchedIndices: number[] = [];
+  private lastSubMatchedIndices: number[] = [];
   private completedTriggered = false;
   private saveTimer: number | null = null;
 
@@ -231,12 +253,18 @@ export class BrickWorkshopEngine {
     this.palette = this.isSandbox && options?.sandboxPalette ? options.sandboxPalette : model.palette;
     this.plan = this.isSandbox ? [] : buildPlan(model);
     this.openedPacks = this.isSandbox ? [] : model.packs.map(() => false);
+    this.packTrayMap = this.isSandbox ? [] : model.packs.map(() => null);
+    this.boxOpened = this.isSandbox;
     this.boardW = model.board.w;
     this.boardD = model.board.d;
     setAudioEnabled(this.feel.soundEnabled);
   }
 
-  async init(savedBricks?: SavedBrickRecord[], savedOpenedPacks?: boolean[]): Promise<void> {
+  async init(
+    savedBricks?: SavedBrickRecord[],
+    savedOpenedPacks?: boolean[],
+    savedBoxOpened?: boolean
+  ): Promise<void> {
     await ensureRapier();
     if (this.disposed) return;
 
@@ -309,13 +337,22 @@ export class BrickWorkshopEngine {
     this.bindEvents();
 
     if (savedBricks && savedBricks.length > 0) {
+      this.boxOpened = savedBoxOpened ?? true;
       this.restoreSavedBricks(savedBricks, savedOpenedPacks);
-      this.refreshWaitingPouch();
+      if (this.boxOpened) this.refreshWaitingPouch();
     } else if (this.isSandbox) {
+      this.boxOpened = true;
       this.spawnSandboxStarterSet();
-    } else if (this.openedPacks.length > 0) {
-      // 開局即以「撕開第一包倒入盤中」的流暢動畫呈現
-      this.openPack(0, false);
+    } else if (savedBoxOpened) {
+      this.boxOpened = true;
+      if (savedOpenedPacks && savedOpenedPacks.length === this.openedPacks.length) {
+        this.openedPacks = [...savedOpenedPacks];
+      }
+      this.refreshWaitingPouch();
+    } else {
+      // 開局先呈現未拆封的「整箱積木大盒」，由玩家點擊開箱、自由選包與選籃倒入
+      this.boxOpened = false;
+      this.setupBoxVisual();
     }
 
     if (!this.isSoftwareGl) {
@@ -407,7 +444,7 @@ export class BrickWorkshopEngine {
 
     const trayCount = this.isSandbox
       ? 2
-      : Math.max(1, ...this.model.packs.map(p => p.trayIndex + 1));
+      : Math.max(2, Math.min(3, Math.max(this.model.packs.length, ...this.model.packs.map(p => p.trayIndex + 1))));
 
     const BUILD = { x0: 0, z0: -6.6, w: this.boardW + 4, d: this.boardD + 4 };
     const uX0 = BUILD.x0 + (BUILD.w - this.boardW) / 2;
@@ -417,22 +454,29 @@ export class BrickWorkshopEngine {
     this.padCx = this.bX0 + W(this.boardW) / 2;
     this.padCz = this.bZ0 + W(this.boardD) / 2;
 
-    const deskW = trayCount > 1 ? 48 : 34;
-    const deskD = 28;
-    const deskCenterX = trayCount > 1 ? -6.0 : -1.5;
+    // 子區塊組裝台位於主組裝區右側
+    this.subX0 = this.bX0 + W(this.boardW + 3);
+    this.subZ0 = this.bZ0;
+    this.subPadCx = this.subX0 + W(this.boardW) / 2;
+    this.subPadCz = this.subZ0 + W(this.boardD) / 2;
+
+    const deskW = trayCount > 1 ? 60 : 50;
+    const deskD = 34;
+    const deskCenterX = trayCount > 1 ? 1.5 : 4.5;
+    const deskCenterZ = -2.5;
     const deskMat = new THREE.MeshStandardMaterial({
       color: 0x4a3728,
       roughness: 0.88,
       metalness: 0.02,
     });
     const desk = new THREE.Mesh(new THREE.BoxGeometry(deskW, 0.6, deskD), deskMat);
-    desk.position.set(deskCenterX, -0.3, 0);
+    desk.position.set(deskCenterX, -0.3, deskCenterZ);
     desk.receiveShadow = true;
     this.scene.add(desk);
 
     for (let i = 0; i < 24; i++) {
       const y = 0.002 + i * 0.0004;
-      const z = -deskD / 2 + (i + 0.5) * (deskD / 24);
+      const z = deskCenterZ - deskD / 2 + (i + 0.5) * (deskD / 24);
       const g = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(deskCenterX - deskW / 2, y, z),
         new THREE.Vector3(deskCenterX + deskW / 2, y, z),
@@ -446,7 +490,7 @@ export class BrickWorkshopEngine {
     }
 
     const deskBody = this.world.createRigidBody(
-      RAPIER.RigidBodyDesc.fixed().setTranslation(deskCenterX, -0.3, 0)
+      RAPIER.RigidBodyDesc.fixed().setTranslation(deskCenterX, -0.3, deskCenterZ)
     );
     this.world.createCollider(
       RAPIER.ColliderDesc.cuboid(deskW / 2, 0.3, deskD / 2).setFriction(0.95).setRestitution(0),
@@ -496,6 +540,58 @@ export class BrickWorkshopEngine {
         )
       );
     }
+
+    // 子區塊組裝台（可先於地面獨立拼裝頭部，再整塊合體）
+    this.subPadGroup = new THREE.Group();
+    const subPadMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(padW, 0.08, padD),
+      new THREE.MeshStandardMaterial({ color: 0x353240, roughness: 0.92, metalness: 0.02 })
+    );
+    subPadMesh.position.set(this.subPadCx, BUILD_TOP_Y - 0.04, this.subPadCz);
+    subPadMesh.receiveShadow = true;
+    this.subPadGroup.add(subPadMesh);
+
+    const subRim = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(padW + 0.04, 0.09, padD + 0.04)),
+      new THREE.LineBasicMaterial({ color: 0xf4c430, transparent: true, opacity: 0.65 })
+    );
+    subRim.position.set(this.subPadCx, BUILD_TOP_Y - 0.04, this.subPadCz);
+    this.subPadGroup.add(subRim);
+
+    const subGridMat = new THREE.LineBasicMaterial({ color: 0xf4c430, transparent: true, opacity: 0.25 });
+    for (let i = 0; i <= this.boardW; i++) {
+      this.subPadGroup.add(
+        new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(this.subX0 + W(i), BUILD_TOP_Y + 0.002, this.subZ0),
+            new THREE.Vector3(this.subX0 + W(i), BUILD_TOP_Y + 0.002, this.subZ0 + W(this.boardD)),
+          ]),
+          subGridMat
+        )
+      );
+    }
+    for (let i = 0; i <= this.boardD; i++) {
+      this.subPadGroup.add(
+        new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(this.subX0, BUILD_TOP_Y + 0.002, this.subZ0 + W(i)),
+            new THREE.Vector3(this.subX0 + W(this.boardW), BUILD_TOP_Y + 0.002, this.subZ0 + W(i)),
+          ]),
+          subGridMat
+        )
+      );
+    }
+    this.subPadGroup.visible = false;
+    this.scene.add(this.subPadGroup);
+
+    const subPadBody = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(this.subPadCx, BUILD_TOP_Y - 0.04, this.subPadCz)
+    );
+    this.subPadCollider = this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(padW / 2, 0.04, padD / 2).setFriction(0.95).setRestitution(0),
+      subPadBody
+    );
+    this.subPadCollider.setEnabled(false);
 
     // 托盤貼近組裝區左側，方便手機單手拖曳
     const trayCoords = [
@@ -604,17 +700,21 @@ export class BrickWorkshopEngine {
   }
 
   private setupGuides(): void {
-    const ghostMat = new THREE.MeshBasicMaterial({
+    this.ghostMat = new THREE.MeshBasicMaterial({
       color: 0x6cf0a8,
       transparent: true,
       opacity: 0.38,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    this.ghostMesh = new THREE.Mesh(brickGeometry('1x1').geo, ghostMat);
+    this.ghostMesh = new THREE.Mesh(brickGeometry('1x1').geo, this.ghostMat);
     this.ghostMesh.visible = false;
     this.ghostMesh.renderOrder = 10;
     this.scene.add(this.ghostMesh);
+
+    this.multiGhostGroup.visible = false;
+    this.multiGhostGroup.renderOrder = 10;
+    this.scene.add(this.multiGhostGroup);
 
     this.dropLine = new THREE.Mesh(
       new THREE.CylinderGeometry(0.038, 0.038, 1, 8),
@@ -645,6 +745,194 @@ export class BrickWorkshopEngine {
     this.scene.add(this.dropRing);
 
     this.scene.add(this.guideGroup);
+  }
+
+  private setupBoxVisual(): void {
+    if (this.boxGroup) {
+      this.scene.remove(this.boxGroup);
+      this.boxGroup = null;
+    }
+    const group = new THREE.Group();
+    const bw = 4.6;
+    const bh = 2.6;
+    const bd = 3.5;
+
+    const cardMat = new THREE.MeshStandardMaterial({
+      color: 0xc89968,
+      roughness: 0.78,
+      metalness: 0.04,
+    });
+    const innerMat = new THREE.MeshStandardMaterial({
+      color: 0x7d5d3b,
+      roughness: 0.9,
+    });
+    const bandMat = new THREE.MeshStandardMaterial({
+      color: 0x2674a6,
+      roughness: 0.48,
+      metalness: 0.08,
+    });
+    const accentColor = this.palette[0]?.hex ?? 0x7fe3ff;
+    const emblemMat = new THREE.MeshStandardMaterial({
+      color: accentColor,
+      roughness: 0.32,
+      metalness: 0.05,
+    });
+
+    // 盒底與四壁（開口朝上）
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.14, bd), cardMat);
+    floor.position.set(0, 0.07, 0);
+    floor.receiveShadow = true;
+    floor.userData.isBrickBox = true;
+    group.add(floor);
+
+    const wallT = 0.14;
+    const walls: [number, number, number, number, number, number][] = [
+      [0, bh / 2, bd / 2 - wallT / 2, bw, bh, wallT],
+      [0, bh / 2, -bd / 2 + wallT / 2, bw, bh, wallT],
+      [-bw / 2 + wallT / 2, bh / 2, 0, wallT, bh, bd - wallT * 2],
+      [bw / 2 - wallT / 2, bh / 2, 0, wallT, bh, bd - wallT * 2],
+    ];
+    walls.forEach(([x, y, z, w, h, d]) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), cardMat);
+      m.position.set(x, y, z);
+      m.castShadow = !this.isSoftwareGl;
+      m.receiveShadow = true;
+      m.userData.isBrickBox = true;
+      group.add(m);
+    });
+
+    // 盒子內部底墊陰影
+    const cavity = new THREE.Mesh(new THREE.BoxGeometry(bw - 0.32, 0.1, bd - 0.32), innerMat);
+    cavity.position.set(0, 0.16, 0);
+    cavity.userData.isBrickBox = true;
+    group.add(cavity);
+
+    // 盒身彩色封帶與積木標章
+    const band = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.04, 0.68, bd + 0.04), bandMat);
+    band.position.set(0, bh * 0.56, 0);
+    band.userData.isBrickBox = true;
+    group.add(band);
+
+    const emblem = new THREE.Mesh(brickGeometry('1x2').geo, emblemMat);
+    emblem.scale.setScalar(0.95);
+    emblem.position.set(0, bh * 0.58, bd / 2 + 0.25);
+    emblem.userData.isBrickBox = true;
+    group.add(emblem);
+
+    // 盒內多包積木袋（開箱時會冒出來）
+    const pouchesGroup = new THREE.Group();
+    const packCount = Math.max(1, this.model.packs.length);
+    for (let i = 0; i < packCount; i++) {
+      const { group: pg } = this.buildPouchVisual(i);
+      pg.scale.setScalar(0.66);
+      const frac = packCount === 1 ? 0 : (i / (packCount - 1) - 0.5) * 2.1;
+      pg.position.set(frac, 1.22, (i % 2 === 0 ? -1 : 1) * 0.35);
+      pg.rotation.set(-0.15, (i - 0.5) * 0.28, (i % 2 === 0 ? 1 : -1) * 0.1);
+      pg.traverse(obj => {
+        obj.userData.isBrickBox = true;
+      });
+      pouchesGroup.add(pg);
+    }
+    group.add(pouchesGroup);
+    this.boxPouchesGroup = pouchesGroup;
+
+    // 兩片可掀開的紙箱上蓋折頁（各以左右盒緣為轉軸）
+    const makeFlap = (side: -1 | 1) => {
+      const pivot = new THREE.Group();
+      pivot.position.set((side * bw) / 2, bh, 0);
+      const flap = new THREE.Mesh(new THREE.BoxGeometry(bw / 2, 0.1, bd), cardMat);
+      flap.position.set((-side * bw) / 4, 0, 0);
+      flap.castShadow = !this.isSoftwareGl;
+      flap.userData.isBrickBox = true;
+      pivot.add(flap);
+
+      const tape = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.12, bd + 0.02),
+        new THREE.MeshStandardMaterial({ color: 0xf4c430, roughness: 0.4 })
+      );
+      tape.position.set((-side * bw) / 2 + side * 0.06, 0.01, 0);
+      tape.userData.isBrickBox = true;
+      pivot.add(tape);
+
+      group.add(pivot);
+      return pivot as unknown as THREE.Mesh;
+    };
+    this.boxFlapLeft = makeFlap(-1);
+    this.boxFlapRight = makeFlap(1);
+
+    group.position.set(this.padCx, BUILD_TOP_Y + 0.01, this.padCz);
+    this.scene.add(group);
+    this.boxGroup = group;
+  }
+
+  private pickBrickBox(): boolean {
+    if (!this.boxGroup || this.boxOpened || this.boxOpening) return false;
+    this.raycaster.setFromCamera(_ndc, this.camera);
+    const hits = this.raycaster.intersectObject(this.boxGroup, true);
+    return hits.length > 0;
+  }
+
+  public openBox(instant = false): void {
+    if (this.boxOpened || this.boxOpening) return;
+    if (instant) {
+      if (this.boxGroup) {
+        this.scene.remove(this.boxGroup);
+        this.boxGroup = null;
+      }
+      this.boxOpened = true;
+      this.boxOpening = false;
+      this.refreshWaitingPouch();
+      this.scheduleAutoSave();
+      this.emitSnapshot();
+      return;
+    }
+
+    if (!this.boxGroup) {
+      this.setupBoxVisual();
+    }
+    this.boxOpening = true;
+    this.boxOpenAnim = 0;
+    playClick('box');
+    this.emitSnapshot();
+  }
+
+  private updateBoxOpening(dt: number): void {
+    if (!this.boxOpening || !this.boxGroup) return;
+    this.boxOpenAnim += dt;
+    const dur = 0.88;
+    const k = Math.min(1, this.boxOpenAnim / dur);
+
+    // 前 0.45s 打開左右上蓋並讓裡面的零件袋浮起
+    const flapK = Math.min(1, k / 0.5);
+    const flapEase = 1 - Math.pow(1 - flapK, 3);
+    if (this.boxFlapLeft) this.boxFlapLeft.rotation.z = flapEase * 2.15;
+    if (this.boxFlapRight) this.boxFlapRight.rotation.z = -flapEase * 2.15;
+
+    if (this.boxPouchesGroup) {
+      const popK = Math.max(0, Math.min(1, (k - 0.18) / 0.5));
+      this.boxPouchesGroup.position.y = Math.sin(popK * Math.PI * 0.5) * 1.45;
+    }
+
+    // 後半段箱子往後淡出移開，讓出組裝區
+    if (k > 0.62) {
+      const slideK = (k - 0.62) / 0.38;
+      this.boxGroup.position.z = this.padCz - slideK * 5.2;
+      this.boxGroup.position.y = BUILD_TOP_Y + 0.01 + slideK * 1.6;
+      this.boxGroup.scale.setScalar(Math.max(0.05, 1 - slideK * 0.75));
+    }
+
+    if (k >= 1) {
+      this.scene.remove(this.boxGroup);
+      this.boxGroup = null;
+      this.boxFlapLeft = null;
+      this.boxFlapRight = null;
+      this.boxPouchesGroup = null;
+      this.boxOpening = false;
+      this.boxOpened = true;
+      this.refreshWaitingPouch();
+      this.scheduleAutoSave();
+      this.emitSnapshot();
+    }
   }
 
   private buildPouchVisual(packIdx: number): {
@@ -698,13 +986,12 @@ export class BrickWorkshopEngine {
       this.waitingPouchGroup = null;
       this.waitingPouchPackIdx = null;
     }
-    if (this.isSandbox || this.activePour) return;
+    if (this.isSandbox || !this.boxOpened || this.activePour) return;
 
     const nextIdx = this.openedPacks.findIndex(v => !v);
     if (nextIdx < 0) return;
 
-    const targetSpec = this.plan.find(p => p.packIndex === nextIdx);
-    const tray = this.trays[targetSpec?.trayIndex ?? 0] ?? this.trays[0];
+    const tray = this.trays[this.activeTray] ?? this.trays[0];
     const { group } = this.buildPouchVisual(nextIdx);
     group.position.set(tray.cx - tray.widthWorld * 0.25, TRAY_FLOOR_TOP + 2.35, tray.cz - tray.depthWorld * 0.28);
     group.rotation.set(0.18, 0.25, -0.08);
@@ -714,9 +1001,9 @@ export class BrickWorkshopEngine {
   }
 
   /**
-   * 視角預設：以「組裝區正中心 (padCx, 1.15, padCz)」為 OrbitControls 核心軸點
+   * 視角預設：以「組裝區正中心」或「子區塊組裝台正中心」為 OrbitControls 核心軸點
    */
-  private getViewPreset(key: 'build' | 'wide' | 'tray'): { pos: THREE.Vector3; tgt: THREE.Vector3 } {
+  private getViewPreset(key: 'build' | 'wide' | 'tray' | 'subpad'): { pos: THREE.Vector3; tgt: THREE.Vector3 } {
     const w = this.container.clientWidth || window.innerWidth || 1024;
     const h = this.container.clientHeight || window.innerHeight || 768;
     const aspect = w / Math.max(1, h);
@@ -734,6 +1021,16 @@ export class BrickWorkshopEngine {
         ),
       };
     }
+    if (key === 'subpad') {
+      return {
+        tgt: new THREE.Vector3(this.subPadCx, 1.15, this.subPadCz),
+        pos: new THREE.Vector3(
+          this.subPadCx - 1.5 * mobileScale,
+          11.4 * mobileScale,
+          this.subPadCz + 12.0 * mobileScale
+        ),
+      };
+    }
     if (key === 'tray' && tray) {
       return {
         tgt: new THREE.Vector3(tray.cx + 0.8, 0.6, tray.cz),
@@ -742,41 +1039,66 @@ export class BrickWorkshopEngine {
     }
 
     const minX = this.trays.reduce((m, t) => Math.min(m, t.cx), -2);
-    const midX = (minX + this.padCx) / 2 + 1.0;
+    const maxX = this.subAssemblyEnabled ? this.subPadCx + 2.5 : this.padCx;
+    const midX = (minX + maxX) / 2 + 0.8;
     return {
       tgt: new THREE.Vector3(midX, 0.7, (this.padCz + (tray?.cz ?? 0)) * 0.45),
       pos: new THREE.Vector3(
         midX,
-        (this.trays.length > 1 ? 21.0 : 18.0) * mobileScale,
-        20.0 * mobileScale
+        (this.trays.length > 1 || this.subAssemblyEnabled ? 22.0 : 18.0) * mobileScale,
+        (this.subAssemblyEnabled ? 22.5 : 20.0) * mobileScale
       ),
     };
   }
 
-  public switchView(next?: 'build' | 'wide' | 'tray'): void {
+  public switchView(next?: 'build' | 'wide' | 'tray' | 'subpad'): void {
     if (next) {
       this.viewKey = next;
     } else {
-      this.viewKey =
-        this.viewKey === 'build'
-          ? 'wide'
-          : this.viewKey === 'wide' && this.trays.length > 1
-            ? 'tray'
-            : 'build';
+      if (this.viewKey === 'build') {
+        this.viewKey = this.subAssemblyEnabled ? 'subpad' : 'wide';
+      } else if (this.viewKey === 'subpad') {
+        this.viewKey = 'wide';
+      } else if (this.viewKey === 'wide' && this.trays.length > 1) {
+        this.viewKey = 'tray';
+      } else {
+        this.viewKey = 'build';
+      }
     }
     this.tweenCameraTo(this.getViewPreset(this.viewKey));
     this.emitSnapshot();
   }
 
-  public focusTray(trayIdx: number): void {
+  public setSubAssemblyMode(on: boolean): void {
+    if (this.isSandbox || !this.model.subAssemblies || this.model.subAssemblies.length < 2) return;
+    this.subAssemblyEnabled = on;
+    const hasBricksOnSub = this.bricks.some(
+      b => b.pad === 'sub' && (b.state === 'placed' || b.state === 'pressed')
+    );
+    this.subPadGroup.visible = on || hasBricksOnSub;
+    this.subPadCollider.setEnabled(on || hasBricksOnSub);
+    if (on) {
+      this.viewKey = 'subpad';
+      this.tweenCameraTo(this.getViewPreset('subpad'));
+    } else if (this.viewKey === 'subpad') {
+      this.viewKey = 'build';
+      this.tweenCameraTo(this.getViewPreset('build'));
+    }
+    this.emitSnapshot();
+  }
+
+  public focusTray(trayIdx: number, moveCamera = true): void {
     const clamped = Math.max(0, Math.min(this.trays.length - 1, trayIdx));
     this.activeTray = clamped;
     this.trays.forEach((t, i) => {
       const mat = t.rimMesh.material as THREE.LineBasicMaterial;
       mat.opacity = i === clamped ? 0.65 : 0.14;
     });
-    this.viewKey = 'tray';
-    this.tweenCameraTo(this.getViewPreset('tray'));
+    if (moveCamera) {
+      this.viewKey = 'tray';
+      this.tweenCameraTo(this.getViewPreset('tray'));
+    }
+    this.refreshWaitingPouch();
     this.emitSnapshot();
   }
 
@@ -849,6 +1171,7 @@ export class BrickWorkshopEngine {
       cellsWorld: null,
       snapAnim: 0,
       trayIndex,
+      pad: 'main',
       offset: new THREE.Vector3(),
     };
     mesh.userData.brick = brick;
@@ -861,19 +1184,31 @@ export class BrickWorkshopEngine {
   }
 
   /**
-   * 拆包並以「撕開零件袋 -> 傾倒積木嘩啦啦掉進托盤」的物理動畫分批落盤
+   * 拆包並以「撕開零件袋 -> 傾倒積木嘩啦啦掉進指定籃子」的物理動畫分批落盤
    */
-  public openPack(packIdx: number, instant = false): void {
+  public openPack(packIdx: number, instant = false, targetTrayIdx?: number): void {
     if (this.isSandbox || this.openedPacks[packIdx]) return;
+    if (!this.boxOpened) {
+      this.openBox(true);
+    }
     this.openedPacks[packIdx] = true;
 
     const specs = this.plan.filter(p => p.packIndex === packIdx);
-    const firstTray = this.trays[specs[0]?.trayIndex ?? 0] ?? this.trays[0];
+    const chosenIdx =
+      targetTrayIdx !== undefined
+        ? Math.max(0, Math.min(this.trays.length - 1, targetTrayIdx))
+        : this.activeTray;
+    const firstTray = this.trays[chosenIdx] ?? this.trays[0];
+    this.packTrayMap[packIdx] = firstTray.index;
+    this.activeTray = firstTray.index;
+    this.trays.forEach((t, i) => {
+      (t.rimMesh.material as THREE.LineBasicMaterial).opacity = i === firstTray.index ? 0.65 : 0.14;
+    });
 
     if (instant) {
       const margin = W(1.3);
       specs.forEach((spec, k) => {
-        const tray = this.trays[spec.trayIndex] ?? firstTray;
+        const tray = firstTray;
         const col = k % 5;
         const row = Math.floor(k / 5) % 6;
         const x =
@@ -917,7 +1252,7 @@ export class BrickWorkshopEngine {
       items: shuffled.map((s, idx) => ({
         shape: s.shape,
         color: s.color,
-        trayIndex: s.trayIndex,
+        trayIndex: firstTray.index,
         slotIdx: idx,
       })),
       elapsed: 0,
@@ -928,8 +1263,25 @@ export class BrickWorkshopEngine {
       bagBody,
     };
 
+    this.viewKey = 'tray';
+    this.tweenCameraTo(this.getViewPreset('tray'));
     playClick('pick');
     this.emitSnapshot();
+  }
+
+  public openAllRemainingIntoTray(targetTrayIdx: number): void {
+    if (this.isSandbox) return;
+    if (!this.boxOpened) this.openBox(true);
+    const remaining = this.openedPacks
+      .map((opened, idx) => (opened ? -1 : idx))
+      .filter(idx => idx >= 0);
+    if (remaining.length === 0) return;
+
+    for (let i = 0; i < remaining.length - 1; i++) {
+      this.openPack(remaining[i], true, targetTrayIdx);
+    }
+    this.openPack(remaining[remaining.length - 1], false, targetTrayIdx);
+    this.scheduleAutoSave();
   }
 
   private flushActivePour(): void {
@@ -1106,8 +1458,11 @@ export class BrickWorkshopEngine {
     if (savedOpened && savedOpened.length === this.openedPacks.length) {
       this.openedPacks = [...savedOpened];
     }
+    let anySub = false;
     for (const rec of records) {
       const trayIdx = rec.trayIndex ?? 0;
+      const inferredPad: 'main' | 'sub' =
+        rec.pad ?? (rec.pos[0] >= this.subX0 - CELL ? 'sub' : 'main');
       const b = this.createBrick(
         rec.shape,
         rec.color,
@@ -1116,11 +1471,12 @@ export class BrickWorkshopEngine {
         trayIdx
       );
       if (rec.state === 'pressed' || rec.state === 'placed') {
+        if (inferredPad === 'sub') anySub = true;
         if (rec.gx !== undefined && rec.gz !== undefined) {
           if (rec.state === 'pressed') {
-            this.pressBrickAt(b, rec.gx, rec.gz, rec.pos[1], true);
+            this.pressBrickAt(b, rec.gx, rec.gz, rec.pos[1], inferredPad, true);
           } else {
-            this.lightPlaceBrickAt(b, rec.gx, rec.gz, rec.pos[1], true);
+            this.lightPlaceBrickAt(b, rec.gx, rec.gz, rec.pos[1], inferredPad, true);
           }
         }
       } else {
@@ -1129,6 +1485,11 @@ export class BrickWorkshopEngine {
           true
         );
       }
+    }
+    if (anySub) {
+      this.subAssemblyEnabled = true;
+      this.subPadGroup.visible = true;
+      this.subPadCollider.setEnabled(true);
     }
   }
 
@@ -1140,8 +1501,10 @@ export class BrickWorkshopEngine {
       const t = b.body.translation();
       const r = b.body.rotation();
       const bb = bboxOf(rotCells(SHAPES[b.shapeKey].cells, b.rot));
-      const gx = Math.round((t.x - this.bX0) / CELL - bb.w / 2);
-      const gz = Math.round((t.z - this.bZ0) / CELL - bb.d / 2);
+      const ox = b.pad === 'sub' ? this.subX0 : this.bX0;
+      const oz = b.pad === 'sub' ? this.subZ0 : this.bZ0;
+      const gx = Math.round((t.x - ox) / CELL - bb.w / 2);
+      const gz = Math.round((t.z - oz) / CELL - bb.d / 2);
       const st = b.state === 'held' ? 'pool' : b.state;
       return {
         shape: b.shapeKey,
@@ -1158,6 +1521,7 @@ export class BrickWorkshopEngine {
           Number(r.w.toFixed(4)),
         ],
         trayIndex: b.trayIndex,
+        pad: st === 'pool' ? undefined : b.pad,
       };
     });
     return { records, openedPacks: [...this.openedPacks] };
@@ -1200,12 +1564,19 @@ export class BrickWorkshopEngine {
 
     if (!this.feel.showStepGuide || this.isSandbox || this.currentGuideBricks.length === 0) return;
     const matchedSet = new Set(this.lastMatchedIndices);
+    const subMatchedSet = new Set(this.lastSubMatchedIndices);
+    const activeSub = this.getUpperSubAssembly();
 
     for (const p of this.currentGuideBricks) {
-      if (matchedSet.has(p.index)) continue;
-      const wx = this.bX0 + W(p.gx + p.bb.w / 2);
-      const wz = this.bZ0 + W(p.gz + p.bb.d / 2);
-      const y = BUILD_TOP_Y + BRICK_H * (p.layer + 0.5);
+      if (matchedSet.has(p.index) || subMatchedSet.has(p.index)) continue;
+      const onSub = Boolean(this.subAssemblyEnabled && activeSub && p.layer >= activeSub.startLayer);
+      const ox = onSub ? this.subX0 : this.bX0;
+      const oz = onSub ? this.subZ0 : this.bZ0;
+      const localLayer = onSub && activeSub ? p.layer - activeSub.startLayer : p.layer;
+
+      const wx = ox + W(p.gx + p.bb.w / 2);
+      const wz = oz + W(p.gz + p.bb.d / 2);
+      const y = BUILD_TOP_Y + BRICK_H * (localLayer + 0.5);
       const colHex = this.palette[p.color]?.hex ?? 0x7fe3ff;
 
       const geo = new THREE.EdgesGeometry(
@@ -1236,7 +1607,7 @@ export class BrickWorkshopEngine {
       );
       if (!b) continue;
       b.rot = p.rot;
-      this.pressBrickAt(b, p.gx, p.gz, BUILD_TOP_Y + BRICK_H * (p.layer + 0.5), true);
+      this.pressBrickAt(b, p.gx, p.gz, BUILD_TOP_Y + BRICK_H * (p.layer + 0.5), 'main', true);
       built++;
     }
     this.scheduleAutoSave();
@@ -1300,13 +1671,33 @@ export class BrickWorkshopEngine {
     return typeof idx === 'number' ? idx : null;
   }
 
+  private getUpperSubAssembly() {
+    if (this.isSandbox || !this.model.subAssemblies || this.model.subAssemblies.length < 2) {
+      return null;
+    }
+    return this.model.subAssemblies[this.model.subAssemblies.length - 1];
+  }
+
   private surfaceYAt(wx: number, wz: number): number {
-    const gx = Math.floor((wx - this.bX0) / CELL);
-    const gz = Math.floor((wz - this.bZ0) / CELL);
+    let pad: 'main' | 'sub' = 'main';
+    let ox = this.bX0;
+    let oz = this.bZ0;
+    if (
+      this.subAssemblyEnabled &&
+      wx >= this.subX0 - CELL * 0.5 &&
+      wx <= this.subX0 + W(this.boardW) + CELL * 0.5
+    ) {
+      pad = 'sub';
+      ox = this.subX0;
+      oz = this.subZ0;
+    }
+    const gx = Math.floor((wx - ox) / CELL);
+    const gz = Math.floor((wz - oz) / CELL);
     if (gx < 0 || gz < 0 || gx >= this.boardW || gz >= this.boardD) return TRAY_FLOOR_TOP;
     const key = `${gx},${gz}`;
     let top = BUILD_TOP_Y;
     for (const o of this.bricks) {
+      if (o.pad !== pad) continue;
       if ((o.state !== 'placed' && o.state !== 'pressed') || !o.cellsWorld) continue;
       if (!o.cellsWorld.includes(key)) continue;
       top = Math.max(top, o.body.translation().y + BRICK_H / 2);
@@ -1314,17 +1705,31 @@ export class BrickWorkshopEngine {
     return top;
   }
 
-  private supportTopY(b: BrickInstance, gx: number, gz: number): number {
+  private supportTopY(b: BrickInstance, gx: number, gz: number, pad: 'main' | 'sub', ignore?: Set<number>): number {
     const cells = worldCells(b.shapeKey, b.rot, gx, gz);
     let top = BUILD_TOP_Y;
     for (const o of this.bricks) {
-      if (o === b) continue;
+      if (o === b || ignore?.has(o.id)) continue;
+      if (o.pad !== pad) continue;
       if (o.state !== 'placed' && o.state !== 'pressed') continue;
       if (!o.cellsWorld) continue;
       if (!o.cellsWorld.some(c => cells.includes(c))) continue;
       top = Math.max(top, o.body.translation().y + BRICK_H / 2);
     }
     return top + BRICK_H / 2;
+  }
+
+  private rebuildMultiGhost(group: BrickInstance[]): void {
+    while (this.multiGhostGroup.children.length > 0) {
+      this.multiGhostGroup.remove(this.multiGhostGroup.children[0]);
+    }
+    for (const b of group) {
+      const m = new THREE.Mesh(brickGeometry(b.shapeKey).geo, this.ghostMat);
+      m.position.copy(b.offset);
+      m.rotation.y = (b.rot * Math.PI) / 180;
+      m.renderOrder = 10;
+      this.multiGhostGroup.add(m);
+    }
   }
 
   private startHold(brick: BrickInstance, single: boolean): void {
@@ -1345,7 +1750,10 @@ export class BrickWorkshopEngine {
       }
       this.hovering = [];
       this.hoverKey = '';
-      if (g.length > 1) playClick('pluck');
+      if (g.length > 1) {
+        this.rebuildMultiGhost(g);
+        playClick('pluck');
+      }
     } else {
       this.heldGroup = [brick];
       this.held = brick;
@@ -1368,10 +1776,19 @@ export class BrickWorkshopEngine {
     this.emitSnapshot();
   }
 
-  private lightPlaceBrickAt(b: BrickInstance, gx: number, gz: number, dropY: number, silent = false): void {
+  private lightPlaceBrickAt(
+    b: BrickInstance,
+    gx: number,
+    gz: number,
+    dropY: number,
+    pad: 'main' | 'sub' = 'main',
+    silent = false
+  ): void {
     const bb = bboxOf(rotCells(SHAPES[b.shapeKey].cells, b.rot));
-    const wx = this.bX0 + W(gx + bb.w / 2);
-    const wz = this.bZ0 + W(gz + bb.d / 2);
+    const ox = pad === 'sub' ? this.subX0 : this.bX0;
+    const oz = pad === 'sub' ? this.subZ0 : this.bZ0;
+    const wx = ox + W(gx + bb.w / 2);
+    const wz = oz + W(gz + bb.d / 2);
 
     this.setColliders(b, true);
     b.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
@@ -1382,16 +1799,26 @@ export class BrickWorkshopEngine {
     b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     b.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
 
+    b.pad = pad;
     b.state = 'placed';
     b.cellsWorld = worldCells(b.shapeKey, b.rot, gx, gz);
     b.mesh.material = this.getMaterialForBrick(b, 'none');
     if (!silent) playClick('place');
   }
 
-  private pressBrickAt(b: BrickInstance, gx: number, gz: number, dropY: number, silent = false): void {
+  private pressBrickAt(
+    b: BrickInstance,
+    gx: number,
+    gz: number,
+    dropY: number,
+    pad: 'main' | 'sub' = 'main',
+    silent = false
+  ): void {
     const bb = bboxOf(rotCells(SHAPES[b.shapeKey].cells, b.rot));
-    const wx = this.bX0 + W(gx + bb.w / 2);
-    const wz = this.bZ0 + W(gz + bb.d / 2);
+    const ox = pad === 'sub' ? this.subX0 : this.bX0;
+    const oz = pad === 'sub' ? this.subZ0 : this.bZ0;
+    const wx = ox + W(gx + bb.w / 2);
+    const wz = oz + W(gz + bb.d / 2);
 
     this.setColliders(b, true);
     b.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
@@ -1402,13 +1829,16 @@ export class BrickWorkshopEngine {
     b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     b.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
 
+    b.pad = pad;
     b.state = 'pressed';
     b.cellsWorld = worldCells(b.shapeKey, b.rot, gx, gz);
     b.snapAnim = silent ? 0 : 1.0;
     b.mesh.material = this.getMaterialForBrick(b, 'none');
 
     for (const o of this.bricks) {
-      if (o === b || (o.state !== 'pressed' && o.state !== 'placed') || !o.cellsWorld) continue;
+      if (o === b || o.pad !== pad || (o.state !== 'pressed' && o.state !== 'placed') || !o.cellsWorld) {
+        continue;
+      }
       const dy = Math.abs(dropY - o.body.translation().y);
       if (dy > BRICK_H * 0.4 && dy < BRICK_H * 2.2 && o.cellsWorld.some(c => b.cellsWorld!.includes(c))) {
         this.ufUnion(b, o);
@@ -1420,22 +1850,35 @@ export class BrickWorkshopEngine {
   private finishHold(): void {
     if (!this.held) return;
     const g = this.heldGroup.length ? this.heldGroup : [this.held];
+    const lead = g[0];
 
     if (g.length === 1 && this.snapValid) {
-      const lead = g[0];
       if (this.feel.placementMode === 'two-step' && this.downWasPlaced && !this.dragMoved) {
-        this.pressBrickAt(lead, this.snapGx, this.snapGz, this.snapY);
+        this.pressBrickAt(lead, this.snapGx, this.snapGz, this.snapY, this.snapPad);
       } else if (this.feel.placementMode === 'two-step') {
-        this.lightPlaceBrickAt(lead, this.snapGx, this.snapGz, this.snapY);
+        this.lightPlaceBrickAt(lead, this.snapGx, this.snapGz, this.snapY, this.snapPad);
       } else {
-        this.pressBrickAt(lead, this.snapGx, this.snapGz, this.snapY);
+        this.pressBrickAt(lead, this.snapGx, this.snapGz, this.snapY, this.snapPad);
       }
+    } else if (g.length > 1 && this.snapValid) {
+      const leadBb = bboxOf(rotCells(SHAPES[lead.shapeKey].cells, lead.rot));
+      const sorted = [...g].sort((a, b) => a.offset.y - b.offset.y);
+      for (const b of sorted) {
+        const bb = bboxOf(rotCells(SHAPES[b.shapeKey].cells, b.rot));
+        const dgx = Math.round(b.offset.x / CELL + leadBb.w / 2 - bb.w / 2);
+        const dgz = Math.round(b.offset.z / CELL + leadBb.d / 2 - bb.d / 2);
+        this.pressBrickAt(b, this.snapGx + dgx, this.snapGz + dgz, this.snapY + b.offset.y, this.snapPad, true);
+        b.snapAnim = 1.0;
+        this.ufUnion(sorted[0], b);
+      }
+      playClick('snap');
     } else {
       for (const b of g) {
         this.setColliders(b, true);
         b.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
         b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
         b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        b.pad = 'main';
         b.state = 'pool';
         b.cellsWorld = null;
         b.mesh.material = this.getMaterialForBrick(b, 'none');
@@ -1446,6 +1889,7 @@ export class BrickWorkshopEngine {
     this.heldGroup = [];
     this.snapValid = false;
     this.ghostMesh.visible = false;
+    this.multiGhostGroup.visible = false;
     this.hideDropGuide();
     this.scheduleAutoSave();
     this.emitSnapshot();
@@ -1499,8 +1943,21 @@ export class BrickWorkshopEngine {
       this.dragMoved = false;
       this.downOnTrayFloor = null;
       this.downOnPouch = null;
+      this.downOnBox = false;
 
-      // 先檢查是否點到 3D 待拆零件袋
+      // 最先檢查是否點到未開箱的 3D 積木箱
+      if (this.pickBrickBox()) {
+        this.downOnBox = true;
+        try {
+          canvas.setPointerCapture(e.pointerId);
+        } catch {
+          // ignore
+        }
+        e.preventDefault();
+        return;
+      }
+
+      // 檢查是否點到 3D 待拆零件袋
       const pouchPack = this.pickWaitingPouch();
       if (pouchPack !== null) {
         this.downOnPouch = pouchPack;
@@ -1557,8 +2014,13 @@ export class BrickWorkshopEngine {
 
     this.boundPointerUp = (e: PointerEvent) => {
       this.activePointers.delete(e.pointerId);
+      if (this.downOnBox) {
+        this.downOnBox = false;
+        this.openBox(false);
+        return;
+      }
       if (this.downOnPouch !== null) {
-        this.openPack(this.downOnPouch, false);
+        this.openPack(this.downOnPouch, false, this.activeTray);
         this.downOnPouch = null;
         return;
       }
@@ -1572,6 +2034,7 @@ export class BrickWorkshopEngine {
     this.boundBlur = () => {
       this.activePointers.clear();
       this.downOnPouch = null;
+      this.downOnBox = false;
       this.cancelActiveInteractions();
     };
 
@@ -1667,7 +2130,7 @@ export class BrickWorkshopEngine {
       this.fingerBody.setTranslation({ x: 0, y: 40, z: 0 }, true);
     }
 
-    // 3. 固定平面射線＋平滑拖曳＋即時磁吸
+    // 3. 固定平面射線＋平滑拖曳＋即時磁吸（支援主組裝區與子區塊組裝台）
     if (this.held) {
       const lead = this.held;
       const g = this.heldGroup.length ? this.heldGroup : [lead];
@@ -1675,36 +2138,97 @@ export class BrickWorkshopEngine {
       if (!p) return;
 
       const tol = CELL * this.feel.snapTolerance;
-      const inBuild =
+      const inMain =
         p.x > this.bX0 - tol &&
         p.x < this.bX0 + W(this.boardW) + tol &&
         p.z > this.bZ0 - tol &&
         p.z < this.bZ0 + W(this.boardD) + tol;
+      const inSub =
+        this.subAssemblyEnabled &&
+        p.x > this.subX0 - tol &&
+        p.x < this.subX0 + W(this.boardW) + tol &&
+        p.z > this.subZ0 - tol &&
+        p.z < this.subZ0 + W(this.boardD) + tol;
 
-      if (inBuild && g.length === 1) {
+      if ((inMain || inSub) && g.length === 1) {
+        const pad: 'main' | 'sub' = inSub ? 'sub' : 'main';
+        const ox = pad === 'sub' ? this.subX0 : this.bX0;
+        const oz = pad === 'sub' ? this.subZ0 : this.bZ0;
         const bb = bboxOf(rotCells(SHAPES[lead.shapeKey].cells, lead.rot));
-        const gx = Math.round((p.x - this.bX0) / CELL - bb.w / 2);
-        const gz = Math.round((p.z - this.bZ0) / CELL - bb.d / 2);
+        const gx = Math.round((p.x - ox) / CELL - bb.w / 2);
+        const gz = Math.round((p.z - oz) / CELL - bb.d / 2);
         const cgx = Math.min(this.boardW - bb.w, Math.max(0, gx));
         const cgz = Math.min(this.boardD - bb.d, Math.max(0, gz));
-        const wx = this.bX0 + W(cgx + bb.w / 2);
-        const wz = this.bZ0 + W(cgz + bb.d / 2);
-        const dropY = this.supportTopY(lead, cgx, cgz);
+        const wx = ox + W(cgx + bb.w / 2);
+        const wz = oz + W(cgz + bb.d / 2);
+        const dropY = this.supportTopY(lead, cgx, cgz, pad);
         const holdY = dropY + BRICK_H * this.feel.holdHeightMul;
 
         this.snapValid = true;
+        this.snapPad = pad;
         this.snapGx = cgx;
         this.snapGz = cgz;
         this.snapY = dropY;
         this.targetPos.set(wx, holdY, wz);
 
+        this.multiGhostGroup.visible = false;
         this.ghostMesh.position.set(wx, dropY, wz);
         this.ghostMesh.rotation.y = (lead.rot * Math.PI) / 180;
         this.ghostMesh.visible = true;
         this.showDropGuide(wx, this.visualPos.y - BRICK_H * 0.5, dropY - BRICK_H * 0.5, wz);
+      } else if ((inMain || inSub) && g.length > 1) {
+        const pad: 'main' | 'sub' = inSub ? 'sub' : 'main';
+        const ox = pad === 'sub' ? this.subX0 : this.bX0;
+        const oz = pad === 'sub' ? this.subZ0 : this.bZ0;
+        const leadBb = bboxOf(rotCells(SHAPES[lead.shapeKey].cells, lead.rot));
+        const rawGx = Math.round((p.x - ox) / CELL - leadBb.w / 2);
+        const rawGz = Math.round((p.z - oz) / CELL - leadBb.d / 2);
+
+        let minRelX = 0;
+        let maxRelXEnd = leadBb.w;
+        let minRelZ = 0;
+        let maxRelZEnd = leadBb.d;
+        const rels = g.map(b => {
+          const bb = bboxOf(rotCells(SHAPES[b.shapeKey].cells, b.rot));
+          const dgx = Math.round(b.offset.x / CELL + leadBb.w / 2 - bb.w / 2);
+          const dgz = Math.round(b.offset.z / CELL + leadBb.d / 2 - bb.d / 2);
+          minRelX = Math.min(minRelX, dgx);
+          maxRelXEnd = Math.max(maxRelXEnd, dgx + bb.w);
+          minRelZ = Math.min(minRelZ, dgz);
+          maxRelZEnd = Math.max(maxRelZEnd, dgz + bb.d);
+          return { b, dgx, dgz };
+        });
+
+        const cgx = Math.min(this.boardW - maxRelXEnd, Math.max(-minRelX, rawGx));
+        const cgz = Math.min(this.boardD - maxRelZEnd, Math.max(-minRelZ, rawGz));
+        const ignoreIds = new Set(g.map(x => x.id));
+
+        let dropY = -Infinity;
+        for (const { b, dgx, dgz } of rels) {
+          const req = this.supportTopY(b, cgx + dgx, cgz + dgz, pad, ignoreIds) - b.offset.y;
+          if (req > dropY) dropY = req;
+        }
+        const wx = ox + W(cgx + leadBb.w / 2);
+        const wz = oz + W(cgz + leadBb.d / 2);
+        const maxOffY = Math.max(...g.map(x => x.offset.y));
+        const holdY = dropY + BRICK_H * this.feel.holdHeightMul + Math.max(0, -Math.min(...g.map(x => x.offset.y))) * 0.25;
+
+        this.snapValid = true;
+        this.snapPad = pad;
+        this.snapGx = cgx;
+        this.snapGz = cgz;
+        this.snapY = dropY;
+        this.targetPos.set(wx, Math.max(holdY, dropY + maxOffY * 0.1 + BRICK_H * 1.1), wz);
+
+        this.ghostMesh.visible = false;
+        this.multiGhostGroup.position.set(wx, dropY, wz);
+        this.multiGhostGroup.visible = true;
+        const minOffY = Math.min(...g.map(x => x.offset.y));
+        this.showDropGuide(wx, this.visualPos.y + minOffY - BRICK_H * 0.5, dropY + minOffY - BRICK_H * 0.5, wz);
       } else {
         this.snapValid = false;
         this.ghostMesh.visible = false;
+        this.multiGhostGroup.visible = false;
         const surf = this.surfaceYAt(p.x, p.z);
         const holdY = Math.max(
           surf + BRICK_H * (this.feel.holdHeightMul + 0.35),
@@ -1727,21 +2251,23 @@ export class BrickWorkshopEngine {
     }
   }
 
-  private brickCellsNow(b: BrickInstance): Set<string> | null {
+  private brickCellsNow(b: BrickInstance, pad: 'main' | 'sub'): Set<string> | null {
     const bb = bboxOf(rotCells(SHAPES[b.shapeKey].cells, b.rot));
+    const ox = pad === 'sub' ? this.subX0 : this.bX0;
+    const oz = pad === 'sub' ? this.subZ0 : this.bZ0;
     const t = b.body.translation();
-    const gx = Math.round((t.x - this.bX0) / CELL - bb.w / 2);
-    const gz = Math.round((t.z - this.bZ0) / CELL - bb.d / 2);
+    const gx = Math.round((t.x - ox) / CELL - bb.w / 2);
+    const gz = Math.round((t.z - oz) / CELL - bb.d / 2);
     if (gx < 0 || gz < 0 || gx + bb.w > this.boardW || gz + bb.d > this.boardD) return null;
-    if (Math.abs(t.x - (this.bX0 + W(gx + bb.w / 2))) > CELL * 0.4) return null;
-    if (Math.abs(t.z - (this.bZ0 + W(gz + bb.d / 2))) > CELL * 0.4) return null;
+    if (Math.abs(t.x - (ox + W(gx + bb.w / 2))) > CELL * 0.4) return null;
+    if (Math.abs(t.z - (oz + W(gz + bb.d / 2))) > CELL * 0.4) return null;
     return new Set(worldCells(b.shapeKey, b.rot, gx, gz));
   }
 
   private computeMatchedIndices(): number[] {
     if (this.isSandbox) return [];
     const placed = this.bricks.filter(
-      b => (b.state === 'placed' || b.state === 'pressed') && b.cellsWorld
+      b => b.pad === 'main' && (b.state === 'placed' || b.state === 'pressed') && b.cellsWorld
     );
     const used = new Set<number>();
     const matched: number[] = [];
@@ -1753,7 +2279,7 @@ export class BrickWorkshopEngine {
         const ty = b.body.translation().y;
         const ly = BUILD_TOP_Y + BRICK_H * (p.layer + 0.5);
         if (Math.abs(ty - ly) > BRICK_H * 0.55) continue;
-        const cs = this.brickCellsNow(b);
+        const cs = this.brickCellsNow(b, 'main');
         if (!cs || cs.size !== p.cellSet.size) continue;
         if ([...cs].every(c => p.cellSet.has(c))) {
           used.add(b.id);
@@ -1765,9 +2291,98 @@ export class BrickWorkshopEngine {
     return matched;
   }
 
+  private computeSubMatchedIndices(): number[] {
+    const sub = this.getUpperSubAssembly();
+    if (!sub || !this.subAssemblyEnabled) return [];
+    const placedSub = this.bricks.filter(
+      b => b.pad === 'sub' && (b.state === 'placed' || b.state === 'pressed') && b.cellsWorld
+    );
+    if (placedSub.length === 0) return [];
+    const used = new Set<number>();
+    const matched: number[] = [];
+    const subPlan = this.plan.filter(p => p.layer >= sub.startLayer && p.layer <= sub.endLayer);
+
+    for (const p of subPlan) {
+      const localLayer = p.layer - sub.startLayer;
+      for (const b of placedSub) {
+        if (used.has(b.id)) continue;
+        if (b.colorIdx !== p.color || b.shapeKey !== p.shape) continue;
+        const ty = b.body.translation().y;
+        const ly = BUILD_TOP_Y + BRICK_H * (localLayer + 0.5);
+        if (Math.abs(ty - ly) > BRICK_H * 0.55) continue;
+        const cs = this.brickCellsNow(b, 'sub');
+        if (!cs || cs.size !== p.cellSet.size) continue;
+        if ([...cs].every(c => p.cellSet.has(c))) {
+          used.add(b.id);
+          matched.push(p.index);
+          break;
+        }
+      }
+    }
+
+    // 當子工作台區塊全數拼妥時，自動將該區塊內所有積木合併成同一組（方便一抓整塊合體）
+    if (matched.length > 0 && matched.length === subPlan.length && placedSub.length >= subPlan.length) {
+      for (let i = 1; i < placedSub.length; i++) {
+        this.ufUnion(placedSub[0], placedSub[i]);
+      }
+    }
+    return matched;
+  }
+
+  public mergeSubAssemblyToMain(): boolean {
+    const sub = this.getUpperSubAssembly();
+    if (!sub) return false;
+    const subPlan = this.plan.filter(p => p.layer >= sub.startLayer && p.layer <= sub.endLayer);
+    const subBricks = this.bricks.filter(
+      b => b.pad === 'sub' && (b.state === 'placed' || b.state === 'pressed') && b.cellsWorld
+    );
+    if (subBricks.length === 0) return false;
+
+    const used = new Set<number>();
+    let moved = 0;
+    for (const p of subPlan) {
+      const localLayer = p.layer - sub.startLayer;
+      for (const b of subBricks) {
+        if (used.has(b.id)) continue;
+        if (b.colorIdx !== p.color || b.shapeKey !== p.shape) continue;
+        const ty = b.body.translation().y;
+        const ly = BUILD_TOP_Y + BRICK_H * (localLayer + 0.5);
+        if (Math.abs(ty - ly) > BRICK_H * 0.55) continue;
+        const cs = this.brickCellsNow(b, 'sub');
+        if (!cs || cs.size !== p.cellSet.size) continue;
+        if ([...cs].every(c => p.cellSet.has(c))) {
+          used.add(b.id);
+          b.rot = p.rot;
+          this.pressBrickAt(b, p.gx, p.gz, BUILD_TOP_Y + BRICK_H * (p.layer + 0.5), 'main', true);
+          b.snapAnim = 1.0;
+          moved++;
+          break;
+        }
+      }
+    }
+    if (moved > 0) {
+      playClick('snap');
+      this.viewKey = 'build';
+      this.tweenCameraTo(this.getViewPreset('build'));
+      this.scheduleAutoSave();
+      this.emitSnapshot();
+      return true;
+    }
+    return false;
+  }
+
   private emitSnapshot(): void {
     const matchedIndices = this.computeMatchedIndices();
     this.lastMatchedIndices = matchedIndices;
+    const subMatchedIndices = this.computeSubMatchedIndices();
+    this.lastSubMatchedIndices = subMatchedIndices;
+
+    const activeSub = this.getUpperSubAssembly();
+    const subPlanCount = activeSub
+      ? this.plan.filter(p => p.layer >= activeSub.startLayer && p.layer <= activeSub.endLayer).length
+      : 0;
+    const subReadyToMerge = subPlanCount > 0 && subMatchedIndices.length >= subPlanCount;
+
     const isComplete =
       !this.isSandbox && this.plan.length > 0 && matchedIndices.length === this.plan.length;
     if (isComplete && !this.completedTriggered) {
@@ -1793,17 +2408,27 @@ export class BrickWorkshopEngine {
       planCount: this.plan.length,
       matchedCount: matchedIndices.length,
       matchedIndices,
+      boxOpened: this.boxOpened,
+      boxOpening: this.boxOpening,
       openedPacks: [...this.openedPacks],
+      packTrayMap: [...this.packTrayMap],
       pouringPack: this.activePour ? this.activePour.packIdx : null,
       activeTray: this.activeTray,
       trayCount: this.trays.length,
       currentView: this.viewKey,
       isComplete,
       heldActive: Boolean(this.held),
+      heldCount: this.heldGroup.length,
       singlePluckMode: this.singlePluckMode,
       poolCount,
       placedCount,
       pressedCount,
+      subAssemblyEnabled: this.subAssemblyEnabled,
+      hasSubAssemblies: Boolean(activeSub),
+      activeSubName: activeSub?.name ?? null,
+      subMatchedCount: subMatchedIndices.length,
+      subPlanCount,
+      subReadyToMerge,
     });
   }
 
@@ -1812,7 +2437,7 @@ export class BrickWorkshopEngine {
     this.saveTimer = window.setTimeout(() => {
       if (this.disposed) return;
       const { records, openedPacks } = this.exportRecords();
-      this.callbacks.onAutoSave(records, openedPacks);
+      this.callbacks.onAutoSave(records, openedPacks, this.boxOpened);
     }, 450);
   }
 
@@ -1849,6 +2474,7 @@ export class BrickWorkshopEngine {
       if (this.camTween.k >= 1) this.camTween = null;
     }
 
+    this.updateBoxOpening(dt);
     this.updateActivePour(dt);
     this.updateInteraction(dt);
 

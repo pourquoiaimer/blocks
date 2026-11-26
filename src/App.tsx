@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  Boxes,
   CheckCircle2,
   Eye,
   EyeOff,
   Maximize2,
+  Package,
   PackageOpen,
   PanelRightOpen,
   Plus,
@@ -50,6 +52,7 @@ type ActiveSession =
       model: BrickModel;
       initialRecords?: SavedBrickRecord[];
       initialOpenedPacks?: boolean[];
+      initialBoxOpened?: boolean;
       initialElapsedSec: number;
     }
   | {
@@ -189,7 +192,7 @@ export default function App() {
         onFps: fps => {
           if (fpsSpanRef.current) fpsSpanRef.current.textContent = `${fps} fps`;
         },
-        onAutoSave: (records, openedPacks) => {
+        onAutoSave: (records, openedPacks, boxOpened) => {
           if (cancelled) return;
           if (session.kind === 'sandbox') {
             const store = saveSandboxState({ bricks: records, updatedAt: Date.now() });
@@ -200,6 +203,7 @@ export default function App() {
             const store = saveActiveBuild({
               modelId: session.model.id,
               customModel: session.model.isCustom ? session.model : undefined,
+              boxOpened,
               openedPacks,
               elapsedSec,
               bricks: records,
@@ -221,11 +225,15 @@ export default function App() {
     engineRef.current = engine;
     const initRecords = session.initialRecords;
     const initPacks = session.kind === 'model' ? session.initialOpenedPacks : undefined;
+    const initBoxOpened = session.kind === 'model' ? session.initialBoxOpened : undefined;
 
-    void engine.init(initRecords, initPacks).then(() => {
+    void engine.init(initRecords, initPacks, initBoxOpened).then(() => {
       if (!cancelled) {
         cgGameplayStart();
-        const st = buildSteps(session.kind === 'model' ? buildPlan(session.model) : []);
+        const st = buildSteps(
+          session.kind === 'model' ? buildPlan(session.model) : [],
+          session.kind === 'model' ? session.model.sections : undefined
+        );
         if (st[0]) engine.setGuideBricks(st[0].bricks);
       }
     });
@@ -279,6 +287,7 @@ export default function App() {
       model: m,
       initialRecords: ab.bricks,
       initialOpenedPacks: ab.openedPacks,
+      initialBoxOpened: ab.boxOpened ?? (ab.bricks.length > 0 || ab.openedPacks.some(Boolean)),
       initialElapsedSec: ab.elapsedSec,
     });
   };
@@ -304,6 +313,7 @@ export default function App() {
           saveActiveBuild({
             modelId: session.model.id,
             customModel: session.model.isCustom ? session.model : undefined,
+            boxOpened: hud?.boxOpened ?? true,
             openedPacks,
             elapsedSec,
             bricks: records,
@@ -376,9 +386,11 @@ export default function App() {
                 <div className="text-[10.5px] text-[#8490a0] tabular-nums">
                   {hud?.currentView === 'build'
                     ? '組裝中心'
-                    : hud?.currentView === 'tray'
-                      ? `托盤 ${((hud?.activeTray ?? 0) + 1)} 特寫`
-                      : '全景視角'}{' '}
+                    : hud?.currentView === 'subpad'
+                      ? '子區塊組裝台'
+                      : hud?.currentView === 'tray'
+                        ? `托盤 ${((hud?.activeTray ?? 0) + 1)} 特寫`
+                        : '全景視角'}{' '}
                   · {feel.placementMode === 'instant' ? '放開壓緊' : '輕放兩段'} ·{' '}
                   <span ref={fpsSpanRef}>60 fps</span>
                 </div>
@@ -457,50 +469,140 @@ export default function App() {
               </button>
             ))}
 
-          {/* 左下：分包按鈕 / 多托盤切換 / 無限模式發磚器 */}
+          {/* 未開箱提示按鈕 */}
+          {session.kind === 'model' && hud && !hud.boxOpened && (
+            <div className="fixed left-1/2 bottom-20 -translate-x-1/2 z-20 flex flex-col items-center gap-2 pointer-events-auto">
+              <button
+                type="button"
+                disabled={hud.boxOpening}
+                onClick={() => engineRef.current?.openBox(false)}
+                className="flex items-center gap-2.5 px-5 py-3 rounded-2xl bg-[#f4c430] hover:bg-[#ffd54f] text-[#1a150f] text-sm font-bold shadow-2xl border border-white/30 transition-transform active:scale-95 disabled:opacity-70"
+              >
+                <Package className="w-5 h-5" />
+                {hud.boxOpening
+                  ? '正在開箱取出積木包…'
+                  : `點擊桌上的 ${session.model.name} 積木箱（或點此開箱）`}
+              </button>
+              <span className="text-[11px] text-[#c6d0dc] bg-[#11151b]/90 px-3 py-1 rounded-lg border border-white/10">
+                內含 {session.model.packs.length} 包零件 · 開箱後可自由選擇先拆哪幾包、倒進同一個或不同籃子
+              </span>
+            </div>
+          )}
+
+          {/* 左下：開箱選包倒入籃子 / 撥開 / 分區 / 籃子切換 */}
           <div className="fixed left-3 bottom-3 z-10 flex flex-wrap items-end gap-2 max-w-[calc(100vw-240px)]">
-            {session.kind === 'model' && (
-              <div className="flex flex-wrap gap-1.5">
-                {session.model.packs.map((_, idx) => {
-                  const opened = Boolean(hud?.openedPacks[idx]);
-                  const pouring = hud?.pouringPack === idx;
-                  const count = plan.filter(p => p.packIndex === idx).length;
-                  return (
+            {session.kind === 'model' && hud?.boxOpened && (
+              <div className="flex flex-col gap-1.5 rounded-xl bg-[#11151b]/95 border border-white/12 p-2 shadow-xl">
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="text-[#8e9cab]">倒入目標籃子：</span>
+                  {Array.from({ length: hud.trayCount }).map((_, tIdx) => (
                     <button
-                      key={idx}
+                      key={tIdx}
                       type="button"
-                      disabled={opened}
-                      onClick={() => engineRef.current?.openPack(idx)}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left text-xs transition-colors whitespace-nowrap ${
-                        pouring
-                          ? 'bg-[#223244]/95 border-[#7fe3ff]/70 text-[#7fe3ff]'
-                          : opened
-                            ? 'bg-[#171c23]/65 border-white/8 text-[#6e7b8b] cursor-default'
-                            : 'bg-[#1b222c]/95 border-white/16 hover:border-[#7fe3ff]/60 text-[#e4ecf5]'
+                      onClick={() => engineRef.current?.focusTray(tIdx, false)}
+                      className={`px-2 py-0.5 rounded-md font-medium border transition-colors ${
+                        hud.activeTray === tIdx
+                          ? 'bg-[#7fe3ff] text-[#0c141c] border-[#7fe3ff]'
+                          : 'bg-[#1a2028] text-[#b4c0ce] border-white/10 hover:text-white'
                       }`}
                     >
-                      <PackageOpen className={`w-3.5 h-3.5 ${opened && !pouring ? 'text-[#5b6675]' : 'text-[#7fe3ff]'}`} />
-                      <span>
-                        <strong className="font-semibold">
-                          {pouring ? `傾倒第 ${idx + 1} 包` : `第 ${idx + 1} 包`}
-                        </strong>
-                        <span className="ml-1.5 tabular-nums opacity-80">{count} 顆</span>
-                      </span>
+                      籃子 {tIdx + 1}
                     </button>
-                  );
-                })}
+                  ))}
+                  {hud.openedPacks.filter(v => !v).length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => engineRef.current?.openAllRemainingIntoTray(hud.activeTray)}
+                      className="ml-1 px-2 py-0.5 rounded-md bg-[#263242] hover:bg-[#314054] text-[#dce5f0] border border-white/12"
+                      title="把剩下未拆的積木包全部倒進目前選取的籃子裡一起翻找"
+                    >
+                      全部混倒進籃 {hud.activeTray + 1}
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-1.5">
+                  {session.model.packs.map((pack, idx) => {
+                    const opened = Boolean(hud.openedPacks[idx]);
+                    const pouring = hud.pouringPack === idx;
+                    const pouredTray = hud.packTrayMap[idx];
+                    const count = plan.filter(p => p.packIndex === idx).length;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        disabled={opened}
+                        onClick={() => engineRef.current?.openPack(idx, false, hud.activeTray)}
+                        title={pack.label}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-left text-xs transition-colors whitespace-nowrap ${
+                          pouring
+                            ? 'bg-[#223244]/95 border-[#7fe3ff]/70 text-[#7fe3ff]'
+                            : opened
+                              ? 'bg-[#171c23]/65 border-white/8 text-[#6e7b8b] cursor-default'
+                              : 'bg-[#1b222c]/95 border-white/16 hover:border-[#7fe3ff]/60 text-[#e4ecf5]'
+                        }`}
+                      >
+                        <PackageOpen className={`w-3.5 h-3.5 ${opened && !pouring ? 'text-[#5b6675]' : 'text-[#7fe3ff]'}`} />
+                        <span>
+                          <strong className="font-semibold">
+                            {pouring
+                              ? `倒進籃 ${hud.activeTray + 1} 中`
+                              : opened
+                                ? `第 ${idx + 1} 包${pouredTray !== null && pouredTray !== undefined ? ` (籃${pouredTray + 1})` : ''}`
+                                : `拆第 ${idx + 1} 包 → 籃 ${hud.activeTray + 1}`}
+                          </strong>
+                          <span className="ml-1.5 tabular-nums opacity-80">{count} 顆</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
             <button
               type="button"
               onClick={() => engineRef.current?.stirTray()}
-              title="撥開托盤裡堆疊的積木"
+              title="撥開目前籃子裡堆疊的積木"
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1b222c]/95 hover:bg-[#26303d] border border-white/14 text-xs font-medium text-[#dce5f0] whitespace-nowrap transition-colors"
             >
               <Shuffle className="w-3.5 h-3.5 text-[#f4c430]" />
               撥開積木
             </button>
+
+            {session.kind === 'model' && hud?.hasSubAssemblies && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    engineRef.current?.setSubAssemblyMode(!(hud?.subAssemblyEnabled ?? false))
+                  }
+                  title="先在右側子組裝台單獨拼好頭部等區塊，再整塊抓起合體到主體"
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium whitespace-nowrap transition-colors ${
+                    hud?.subAssemblyEnabled
+                      ? 'bg-[#332a18]/95 border-[#f4c430]/75 text-[#ffe082]'
+                      : 'bg-[#1b222c]/95 border-white/14 text-[#dce5f0] hover:bg-[#26303d]'
+                  }`}
+                >
+                  <Boxes className="w-3.5 h-3.5 text-[#f4c430]" />
+                  <span>
+                    {hud?.subAssemblyEnabled
+                      ? `分區中：${hud.activeSubName} (${hud.subMatchedCount}/${hud.subPlanCount})`
+                      : `分區組裝：${hud.activeSubName}`}
+                  </span>
+                </button>
+                {hud?.subAssemblyEnabled && hud?.subReadyToMerge && (
+                  <button
+                    type="button"
+                    onClick={() => engineRef.current?.mergeSubAssemblyToMain()}
+                    className="flex items-center gap-1 px-3 py-2 rounded-xl bg-[#6fdc9a] hover:bg-[#8be7af] text-[#0c1812] text-xs font-semibold whitespace-nowrap shadow-lg"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    一鍵合體（或直接整塊拖上主體）
+                  </button>
+                )}
+              </div>
+            )}
 
             {session.kind === 'sandbox' && (
               <div className="flex flex-wrap items-center gap-2 rounded-xl bg-[#11151b]/95 border border-white/12 p-2">
@@ -556,21 +658,21 @@ export default function App() {
               </div>
             )}
 
-            {/* 多托盤切換按鈕 */}
+            {/* 多籃子鏡頭特寫切換按鈕 */}
             {(hud?.trayCount ?? 1) > 1 && (
               <div className="flex items-center gap-1 p-1 rounded-xl bg-[#11151b]/95 border border-white/12">
                 {Array.from({ length: hud?.trayCount ?? 1 }).map((_, tIdx) => (
                   <button
                     key={tIdx}
                     type="button"
-                    onClick={() => engineRef.current?.focusTray(tIdx)}
+                    onClick={() => engineRef.current?.focusTray(tIdx, true)}
                     className={`px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
                       hud?.activeTray === tIdx
                         ? 'bg-[#2a3646] text-[#7fe3ff]'
                         : 'text-[#8f9cab] hover:text-white'
                     }`}
                   >
-                    托盤 {tIdx + 1}
+                    看籃 {tIdx + 1}
                   </button>
                 ))}
               </div>
@@ -579,7 +681,7 @@ export default function App() {
 
           {/* 右下：觸控友善操作鈕 + 切換視角 */}
           <div className="fixed right-3 bottom-3 z-10 flex items-center gap-2">
-            {hud?.heldActive && (
+            {hud?.heldActive && (hud?.heldCount ?? 1) <= 1 && (
               <button
                 type="button"
                 onClick={() => engineRef.current?.rotateHeld()}
@@ -588,6 +690,11 @@ export default function App() {
                 <RotateCw className="w-3.5 h-3.5" />
                 旋轉 90°（R）
               </button>
+            )}
+            {hud?.heldActive && (hud?.heldCount ?? 1) > 1 && (
+              <div className="px-3 py-2 rounded-xl bg-[#2a2417]/95 border border-[#f4c430]/60 text-[#ffe082] text-xs font-medium whitespace-nowrap">
+                整塊拖曳合體中（{hud.heldCount} 顆）
+              </div>
             )}
             <button
               type="button"

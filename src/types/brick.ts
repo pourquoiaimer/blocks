@@ -45,6 +45,13 @@ export interface SectionRule {
   maxLayer: number;
 }
 
+export interface SubAssemblyRule {
+  id: string;
+  name: string;
+  startLayer: number;
+  endLayer: number;
+}
+
 export interface BrickModel {
   id: string;
   name: string;
@@ -55,6 +62,7 @@ export interface BrickModel {
   masks: string[][];
   packs: PackRule[];
   sections?: SectionRule[];
+  subAssemblies?: SubAssemblyRule[];
   isCustom?: boolean;
 }
 
@@ -81,11 +89,13 @@ export interface SavedBrickRecord {
   pos: [number, number, number];
   quat: [number, number, number, number];
   trayIndex?: number;
+  pad?: 'main' | 'sub';
 }
 
 export interface SavedBuildState {
   modelId: string;
   customModel?: BrickModel;
+  boxOpened?: boolean;
   openedPacks: boolean[];
   elapsedSec: number;
   bricks: SavedBrickRecord[];
@@ -120,15 +130,25 @@ export interface WorkshopHudSnapshot {
   planCount: number;
   matchedCount: number;
   matchedIndices: number[];
+  boxOpened: boolean;
+  boxOpening: boolean;
   openedPacks: boolean[];
+  packTrayMap: (number | null)[];
   pouringPack: number | null;
   activeTray: number;
   trayCount: number;
-  currentView: 'build' | 'wide' | 'tray';
+  currentView: 'build' | 'wide' | 'tray' | 'subpad';
   isComplete: boolean;
   heldActive: boolean;
+  heldCount: number;
   singlePluckMode: boolean;
   poolCount: number;
   placedCount: number;
   pressedCount: number;
+  subAssemblyEnabled: boolean;
+  hasSubAssemblies: boolean;
+  activeSubName: string | null;
+  subMatchedCount: number;
+  subPlanCount: number;
+  subReadyToMerge: boolean;
 }

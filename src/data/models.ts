@@ -1,6 +1,6 @@
 import type { BrickModel, ColorDef } from '../types/brick';
 
-/* ═══════ 1. 冰雪公主（Q版方頭公仔比例：11 層立體結構） ═══════ */
+/* ═══════ 1. 冰雪公主（Q版方頭公仔比例：11 層立體結構 · 正面雙眼腮紅與三尖皇冠） ═══════ */
 // +Z（下方 row）朝向玩家正面
 // 0: 冰藍 (#140), 1: 純白 (#01), 2: 粉膚 (#283), 3: 亮金髮 (#226), 4: 曜石黑 (#26), 5: 暖金皇冠 (#297), 6: 玫瑰腮紅 (#222)
 const PRINCESS_SKIRT_0 = [
@@ -25,7 +25,7 @@ const PRINCESS_SKIRT_1 = [
 ];
 const PRINCESS_WAIST = [
   '............',
-  '....0000....',
+  '....3333....',
   '...000000...',
   '...000000...',
   '....5555....',
@@ -46,8 +46,8 @@ const PRINCESS_TORSO = [
 const PRINCESS_NECK = [
   '............',
   '....3333....',
-  '...311113...',
-  '...002200...',
+  '...300003...',
+  '...012210...',
   '....1221....',
   '............',
   '............',
@@ -58,8 +58,8 @@ const PRINCESS_FACE_LO = [
   '...333333...',
   '..33222233..',
   '..32222223..',
-  '..32622623..',
-  '...222222...',
+  '..32222223..',
+  '...262262...',
   '............',
   '............',
 ];
@@ -68,8 +68,18 @@ const PRINCESS_FACE_EYE = [
   '...333333...',
   '..33222233..',
   '..32222223..',
-  '..32422423..',
-  '...222222...',
+  '..32222223..',
+  '...242242...',
+  '............',
+  '............',
+];
+const PRINCESS_FACE_EYE_HI = [
+  '............',
+  '...333333...',
+  '..33222233..',
+  '..32222223..',
+  '..32222223..',
+  '...342243...',
   '............',
   '............',
 ];
@@ -77,9 +87,9 @@ const PRINCESS_BANGS = [
   '............',
   '...333333...',
   '..33333333..',
-  '..33222233..',
+  '..33333333..',
+  '..33333333..',
   '...332233...',
-  '............',
   '............',
   '............',
 ];
@@ -88,30 +98,30 @@ const PRINCESS_HAIR_TOP = [
   '....3333....',
   '...333333...',
   '...333333...',
+  '...333333...',
   '....3333....',
-  '............',
   '............',
   '............',
 ];
 const PRINCESS_CROWN = [
   '............',
   '............',
-  '....5555....',
-  '....5..5....',
   '............',
+  '............',
+  '...5.55.5...',
   '............',
   '............',
   '............',
 ];
 
-/* ═══════ 2. 迷你太空人（Q版公仔比例＋背氧氣瓶＋金色面罩＋天線） ═══════ */
-// 0: 純白 (#01), 1: 深太空灰 (#199), 2: 暖金面罩 (#297), 3: 推進紅 (#21), 4: 科技藍 (#23)
+/* ═══════ 2. 迷你太空人（開窗頭盔內含五官＋額頭金面罩＋胸章＋氧氣背包） ═══════ */
+// 0: 太空白 (#01), 1: 深太空灰 (#199), 2: 反光金面罩 (#297), 3: 推進紅 (#21), 4: 科技藍 (#23), 5: 粉膚 (#283), 6: 曜石黑 (#26)
 const ASTRO_BOOTS = [
   '............',
   '............',
   '...11..11...',
   '...11..11...',
-  '...00..00...',
+  '...11..11...',
   '............',
   '............',
   '............',
@@ -138,21 +148,41 @@ const ASTRO_TORSO = [
 ];
 const ASTRO_CHEST = [
   '............',
-  '...000000...',
+  '...11..11...',
   '..00000000..',
   '..00000000..',
-  '...003400...',
+  '...042240...',
   '............',
   '............',
   '............',
 ];
-const ASTRO_HELMET_LO = [
+const ASTRO_HELMET_CHIN = [
   '............',
   '...000000...',
   '..00000000..',
   '..00000000..',
-  '..00222200..',
-  '...022220...',
+  '..00000000..',
+  '...000000...',
+  '............',
+  '............',
+];
+const ASTRO_HELMET_FACE_LO = [
+  '............',
+  '...000000...',
+  '..00111100..',
+  '..00555500..',
+  '..00555500..',
+  '...055550...',
+  '............',
+  '............',
+];
+const ASTRO_HELMET_FACE_EYE = [
+  '............',
+  '...000000...',
+  '..00111100..',
+  '..00555500..',
+  '..00555500..',
+  '...065560...',
   '............',
   '............',
 ];
@@ -161,8 +191,8 @@ const ASTRO_HELMET_VISOR = [
   '...000000...',
   '..00000000..',
   '..00000000..',
-  '..02222220..',
-  '...222222...',
+  '..00000000..',
+  '...022220...',
   '............',
   '............',
 ];
@@ -178,8 +208,8 @@ const ASTRO_HELMET_TOP = [
 ];
 const ASTRO_ANTENNA = [
   '............',
-  '....33......',
   '....11......',
+  '....31......',
   '............',
   '............',
   '............',
@@ -266,8 +296,8 @@ const SHIBA_CHEEK = [
   '...000000...',
   '..00000000..',
   '..01111110..',
-  '..11122111..',
-  '...111111...',
+  '..11111111..',
+  '....1221....',
   '............',
   '............',
 ];
@@ -276,8 +306,8 @@ const SHIBA_EYES = [
   '...000000...',
   '..00000000..',
   '..00000000..',
-  '..02000020..',
-  '...111111...',
+  '..02011020..',
+  '............',
   '............',
   '............',
 ];
@@ -285,8 +315,8 @@ const SHIBA_BROW = [
   '............',
   '....0000....',
   '...000000...',
-  '...010010...',
-  '....0000....',
+  '...000000...',
+  '..00100100..',
   '............',
   '............',
   '............',
@@ -367,8 +397,8 @@ const DUCK_L5 = [
   '............',
   '....0000....',
   '...000000...',
-  '...030030...',
-  '....0110....',
+  '...000000...',
+  '...031130...',
   '............',
   '............',
   '............',
@@ -414,7 +444,7 @@ const ROCKET_L3 = [
   '...0000...',
   '..000000..',
   '..002200..',
-  '...0000...',
+  '...0220...',
   '..........',
 ];
 const ROCKET_L5 = [
@@ -512,7 +542,7 @@ export const MODELS: BrickModel[] = [
   {
     id: 'princess',
     name: '冰雪公主',
-    subtitle: 'Q版方頭角色 · 冰藍裙擺、金色長髮與皇冠',
+    subtitle: 'Q版方頭角色 · 立體五官、金髮側瀏海與三尖皇冠',
     difficulty: '標準',
     palette: [
       { code: '140', name: '冰藍', hex: 0x6ec3e8 },
@@ -532,19 +562,24 @@ export const MODELS: BrickModel[] = [
       PRINCESS_NECK,
       PRINCESS_FACE_LO,
       PRINCESS_FACE_EYE,
+      PRINCESS_FACE_EYE_HI,
       PRINCESS_BANGS,
       PRINCESS_HAIR_TOP,
       PRINCESS_CROWN,
     ],
     packs: [
       { label: '第 1 包（裙擺與上衣）', maxLayer: 4, trayIndex: 0 },
-      { label: '第 2 包（臉龐、金髮與皇冠）', maxLayer: 9, trayIndex: 1 },
+      { label: '第 2 包（臉龐、金髮與皇冠）', maxLayer: 10, trayIndex: 1 },
     ],
     sections: [
       { name: '區塊 1 · 禮服裙擺', maxLayer: 2 },
       { name: '區塊 2 · 上身與雙臂', maxLayer: 4 },
       { name: '區塊 3 · 頭部與五官', maxLayer: 8 },
-      { name: '區塊 4 · 金色皇冠', maxLayer: 9 },
+      { name: '區塊 4 · 金髮頂與皇冠', maxLayer: 10 },
+    ],
+    subAssemblies: [
+      { id: 'body', name: '禮服與上身', startLayer: 0, endLayer: 4 },
+      { id: 'head', name: '頭部與皇冠', startLayer: 5, endLayer: 10 },
     ],
   },
   {
@@ -578,11 +613,15 @@ export const MODELS: BrickModel[] = [
       { name: '區塊 2 · 頭部與雙眼', maxLayer: 4 },
       { name: '區塊 3 · 立體長耳', maxLayer: 8 },
     ],
+    subAssemblies: [
+      { id: 'body', name: '圓潤身軀', startLayer: 0, endLayer: 2 },
+      { id: 'head', name: '頭部與長耳', startLayer: 3, endLayer: 8 },
+    ],
   },
   {
     id: 'astronaut',
     name: '迷你太空人',
-    subtitle: 'Q版角色 · 太空靴、氧氣背包與金色反光面罩',
+    subtitle: 'Q版角色 · 開窗頭盔內含雙眼、額頭金面罩與氧氣瓶',
     difficulty: '標準',
     palette: [
       { code: '01', name: '太空白', hex: 0xf0f3f7 },
@@ -590,6 +629,8 @@ export const MODELS: BrickModel[] = [
       { code: '297', name: '反光金', hex: 0xe3b138 },
       { code: '21', name: '推進紅', hex: 0xd6362c },
       { code: '23', name: '深海藍', hex: 0x286cb8 },
+      { code: '283', name: '粉膚', hex: 0xf5d0b5 },
+      { code: '26', name: '曜石黑', hex: 0x1e2228 },
     ],
     board: { w: 16, d: 12 },
     masks: [
@@ -597,25 +638,30 @@ export const MODELS: BrickModel[] = [
       ASTRO_LEGS,
       ASTRO_TORSO,
       ASTRO_CHEST,
-      ASTRO_HELMET_LO,
-      ASTRO_HELMET_VISOR,
+      ASTRO_HELMET_CHIN,
+      ASTRO_HELMET_FACE_LO,
+      ASTRO_HELMET_FACE_EYE,
       ASTRO_HELMET_VISOR,
       ASTRO_HELMET_TOP,
       ASTRO_ANTENNA,
     ],
     packs: [
       { label: '第 1 包（太空靴與背包）', maxLayer: 3, trayIndex: 0 },
-      { label: '第 2 包（頭盔與面罩）', maxLayer: 8, trayIndex: 1 },
+      { label: '第 2 包（頭盔、五官與面罩）', maxLayer: 9, trayIndex: 1 },
     ],
     sections: [
       { name: '區塊 1 · 雙靴與背包', maxLayer: 3 },
-      { name: '區塊 2 · 頭盔與金面罩', maxLayer: 8 },
+      { name: '區塊 2 · 頭盔與五官面罩', maxLayer: 9 },
+    ],
+    subAssemblies: [
+      { id: 'body', name: '太空服與背包', startLayer: 0, endLayer: 3 },
+      { id: 'head', name: '頭盔與五官', startLayer: 4, endLayer: 9 },
     ],
   },
   {
     id: 'shiba',
     name: '柴犬',
-    subtitle: 'Q版坐姿柴犬 · 紅項圈、白豆眉與尖耳',
+    subtitle: 'Q版坐姿柴犬 · 前凸白口鼻、紅項圈與白豆眉',
     difficulty: '標準',
     palette: [
       { code: '106', name: '柴犬橘', hex: 0xd98236 },
@@ -643,11 +689,15 @@ export const MODELS: BrickModel[] = [
       { name: '區塊 2 · 柴犬頭部', maxLayer: 5 },
       { name: '區塊 3 · 三角尖耳', maxLayer: 7 },
     ],
+    subAssemblies: [
+      { id: 'body', name: '坐姿身軀', startLayer: 0, endLayer: 2 },
+      { id: 'head', name: '柴犬頭與尖耳', startLayer: 3, endLayer: 7 },
+    ],
   },
   {
     id: 'duck',
     name: '小黃鴨',
-    subtitle: '圓身白翼＋前凸橘喙 · 雙托盤分類',
+    subtitle: '圓身白翼＋亮眼黑瞳＋前凸橘喙 · 雙托盤分類',
     difficulty: '入門',
     palette: [
       { code: '24', name: '鴨黃', hex: 0xf4c430 },
@@ -664,6 +714,10 @@ export const MODELS: BrickModel[] = [
     sections: [
       { name: '區塊 1 · 鴨身與雙翼', maxLayer: 2 },
       { name: '區塊 2 · 鴨頭與橘喙', maxLayer: 6 },
+    ],
+    subAssemblies: [
+      { id: 'body', name: '鴨身與雙翼', startLayer: 0, endLayer: 2 },
+      { id: 'head', name: '鴨頭與橘喙', startLayer: 3, endLayer: 6 },
     ],
   },
   {
@@ -687,6 +741,10 @@ export const MODELS: BrickModel[] = [
       { name: '區塊 2 · 艙體舷窗', maxLayer: 4 },
       { name: '區塊 3 · 鼻錐尖端', maxLayer: 7 },
     ],
+    subAssemblies: [
+      { id: 'body', name: '尾翼與箭體', startLayer: 0, endLayer: 4 },
+      { id: 'head', name: '鼻錐整流罩', startLayer: 5, endLayer: 7 },
+    ],
   },
   {
     id: 'cactus',
@@ -708,6 +766,10 @@ export const MODELS: BrickModel[] = [
     sections: [
       { name: '區塊 1 · 陶土花盆', maxLayer: 2 },
       { name: '區塊 2 · 仙人掌與頂花', maxLayer: 7 },
+    ],
+    subAssemblies: [
+      { id: 'body', name: '陶土花盆', startLayer: 0, endLayer: 2 },
+      { id: 'head', name: '仙人掌與頂花', startLayer: 3, endLayer: 7 },
     ],
   },
 ];

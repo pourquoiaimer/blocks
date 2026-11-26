@@ -5,7 +5,7 @@ export function setAudioEnabled(val: boolean): void {
   enabled = val;
 }
 
-export type SoundKind = 'snap' | 'pick' | 'rot' | 'place' | 'pluck' | 'complete' | 'pour' | 'shake';
+export type SoundKind = 'snap' | 'pick' | 'rot' | 'place' | 'pluck' | 'complete' | 'pour' | 'shake' | 'box';
 
 export function playClick(type: SoundKind = 'snap'): void {
   if (!enabled) return;
@@ -86,6 +86,16 @@ export function playClick(type: SoundKind = 'snap'): void {
       osc.frequency.exponentialRampToValueAtTime(310, now + 0.07);
       gain.gain.setValueAtTime(0.08, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.075);
+    } else if (type === 'box') {
+      osc.frequency.setValueAtTime(160, now);
+      osc.frequency.exponentialRampToValueAtTime(390, now + 0.14);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.17);
+      return;
     } else {
       osc.frequency.setValueAtTime(340, now);
       osc.frequency.exponentialRampToValueAtTime(280, now + 0.035);
