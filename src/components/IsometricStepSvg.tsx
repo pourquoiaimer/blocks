@@ -167,11 +167,17 @@ export const IsometricStepSvg: React.FC<Props> = React.memo(
         const y0 = b.layer;
         const y1 = b.layer + 1;
 
-        const baseHex = item.isCurrent ? (palette[b.color]?.hex ?? 0xeceff2) : 0x3b4451;
+        const colDef = palette[b.color];
+        const isTrans = Boolean(colDef?.transparent);
+        const baseHex = item.isCurrent ? (colDef?.hex ?? 0xeceff2) : 0x3b4451;
         const topColor = item.isCurrent ? hexToCss(baseHex) : '#46515f';
         const leftColor = item.isCurrent ? shadeHex(baseHex, 0.82) : '#37404c';
         const rightColor = item.isCurrent ? shadeHex(baseHex, 0.66) : '#2b333d';
-        const strokeColor = item.isCurrent ? '#0c1016' : '#20262e';
+        const strokeColor = isTrans
+          ? 'rgba(180,232,255,0.85)'
+          : item.isCurrent
+            ? '#0c1016'
+            : '#20262e';
         const strokeW = item.isCurrent ? 0.95 : 0.6;
 
         const tFL = proj(x0, y1, z1);
@@ -183,7 +189,7 @@ export const IsometricStepSvg: React.FC<Props> = React.memo(
         const bFR = proj(x1, y0, z1);
         const bBR = proj(x1, y0, z0);
 
-        ctx.globalAlpha = item.isCurrent ? 1 : 0.78;
+        ctx.globalAlpha = isTrans ? (item.isCurrent ? 0.48 : 0.25) : item.isCurrent ? 1 : 0.78;
 
         // Front-left face (+Z)
         drawPoly([tFL, tFR, bFR, bFL]);
@@ -206,7 +212,7 @@ export const IsometricStepSvg: React.FC<Props> = React.memo(
         ctx.stroke();
 
         if (item.isCurrent) {
-          ctx.strokeStyle = 'rgba(127,227,255,0.45)';
+          ctx.strokeStyle = isTrans ? 'rgba(220,245,255,0.85)' : 'rgba(127,227,255,0.45)';
           ctx.lineWidth = 0.65;
           ctx.stroke();
         }

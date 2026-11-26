@@ -33,6 +33,7 @@ function summarizeParts(bricks: PlanBrick[], palette: BrickModel['palette']) {
     hex: '#' + (palette[item.color]?.hex ?? 0xeceff2).toString(16).padStart(6, '0'),
     colorName: palette[item.color]?.name ?? '',
     colorCode: palette[item.color]?.code ?? String(item.color + 1),
+    transparent: Boolean(palette[item.color]?.transparent),
   }));
 }
 
@@ -87,17 +88,19 @@ export const LayerGridDiagram: React.FC<{
         let borderLeft = '1px solid rgba(255,255,255,0.06)';
         let borderRight = '1px solid rgba(255,255,255,0.06)';
         if (on && color[z][x] !== null) {
-          const hex = (model.palette[color[z][x]!]?.hex ?? 0xeceff2).toString(16).padStart(6, '0');
-          bg = `#${hex}`;
+          const def = model.palette[color[z][x]!];
+          const hex = (def?.hex ?? 0xeceff2).toString(16).padStart(6, '0');
+          bg = def?.transparent ? `rgba(${(def.hex >> 16) & 255},${(def.hex >> 8) & 255},${def.hex & 255},0.48)` : `#${hex}`;
           const same = (dx: number, dz: number) => {
             const nx = x + dx;
             const nz = z + dz;
             return nz >= 0 && nz < Ht && nx >= 0 && nx < Wd && owner[nz][nx] === idx;
           };
-          borderTop = !same(0, -1) ? '2px solid #0b0e12' : '1px solid rgba(0,0,0,0.12)';
-          borderBottom = !same(0, 1) ? '2px solid #0b0e12' : '1px solid rgba(0,0,0,0.12)';
-          borderLeft = !same(-1, 0) ? '2px solid #0b0e12' : '1px solid rgba(0,0,0,0.12)';
-          borderRight = !same(1, 0) ? '2px solid #0b0e12' : '1px solid rgba(0,0,0,0.12)';
+          const edge = def?.transparent ? '#9fe4ff' : '#0b0e12';
+          borderTop = !same(0, -1) ? `2px solid ${edge}` : '1px solid rgba(0,0,0,0.12)';
+          borderBottom = !same(0, 1) ? `2px solid ${edge}` : '1px solid rgba(0,0,0,0.12)';
+          borderLeft = !same(-1, 0) ? `2px solid ${edge}` : '1px solid rgba(0,0,0,0.12)';
+          borderRight = !same(1, 0) ? `2px solid ${edge}` : '1px solid rgba(0,0,0,0.12)';
         } else if (isPrev) {
           bg = '#3a434e';
           borderTop = '1px solid #262d36';
@@ -239,7 +242,9 @@ export const InstructionPanel: React.FC<Props> = ({
                 className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#161c24] border border-white/10 text-[10.5px]"
               >
                 <span
-                  className="w-2.5 h-2.5 rounded-[2px] border border-black/40 shrink-0"
+                  className={`w-2.5 h-2.5 rounded-[2px] shrink-0 ${
+                    c.transparent ? 'border border-[#9fe4ff] opacity-65' : 'border border-black/40'
+                  }`}
                   style={{ backgroundColor: '#' + c.hex.toString(16).padStart(6, '0') }}
                 />
                 <span className="font-mono text-[#7fe3ff]">#{c.code}</span>
@@ -330,7 +335,9 @@ export const InstructionPanel: React.FC<Props> = ({
                   {Array.from({ length: SHAPES[pt.shape].cells.length }).map((_, i) => (
                     <i
                       key={i}
-                      className="w-2 h-2 block border border-[#10141a] -ml-[1px] first:ml-0 rounded-[1px]"
+                      className={`w-2 h-2 block -ml-[1px] first:ml-0 rounded-[1px] ${
+                        pt.transparent ? 'border border-[#9fe4ff]/90 opacity-65' : 'border border-[#10141a]'
+                      }`}
                       style={{ backgroundColor: pt.hex }}
                     />
                   ))}

@@ -223,6 +223,16 @@ export class BrickWorkshopEngine {
   private fingerPrevPos = new THREE.Vector3();
   private finderHighlightTimer: number | null = null;
   private finderHighlighted = new Set<BrickInstance>();
+  private fireworkParticles: {
+    mesh: THREE.Mesh;
+    vel: THREE.Vector3;
+    spin: THREE.Vector3;
+    life: number;
+    maxLife: number;
+  }[] = [];
+  private fireworkGeo: THREE.BoxGeometry | null = null;
+  private fireworkMats: THREE.MeshBasicMaterial[] = [];
+  private fireworkTimers: number[] = [];
 
   private activePointers = new Map<number, { x: number; y: number }>();
   private downScreen = { x: 0, y: 0 };
@@ -258,7 +268,7 @@ export class BrickWorkshopEngine {
     this.feel = { ...feel };
     this.callbacks = callbacks;
     this.isSandbox = Boolean(options?.isSandbox);
-    this.palette = this.isSandbox && options?.sandboxPalette ? options.sandboxPalette : model.palette;
+    this.palette = [...(this.isSandbox && options?.sandboxPalette ? options.sandboxPalette : model.palette)];
     this.plan = this.isSandbox ? [] : buildPlan(model);
     this.openedPacks = this.isSandbox ? [] : model.packs.map(() => false);
     this.packTrayMap = this.isSandbox ? [] : model.packs.map(() => null);
@@ -392,25 +402,58 @@ export class BrickWorkshopEngine {
     this.tick();
   }
 
-  private initMaterialLibrary(): void {
-    const makeMat = (hex: number, roughness: number, emissive: number): THREE.MeshStandardMaterial =>
+  private createColorMaterialSet(idx: number, def: ColorDef): void {
+    const hex = def.hex ?? 0xeceff2;
+    const isTrans = Boolean(def.transparent);
+    const isDark = !isTrans && hex < 0x353535;
+    const roughness = isTrans ? 0.12 : isDark ? 0.48 : 0.36;
+    const baseOpacity = def.opacity ?? 0.42;
+
+    const makeMat = (emissive: number, opacityBoost = 1): THREE.MeshStandardMaterial =>
       new THREE.MeshStandardMaterial({
         color: hex,
         roughness,
-        metalness: 0.03,
-        envMapIntensity: this.isSoftwareGl ? 0.25 : 0.38,
+        metalness: isTrans ? 0.08 : 0.03,
+        envMapIntensity: isTrans ? 0.65 : this.isSoftwareGl ? 0.25 : 0.38,
         emissive,
+        transparent: isTrans,
+        opacity: isTrans ? Math.min(0.88, baseOpacity * opacityBoost) : 1,
+        depthWrite: !isTrans,
       });
 
+    this.baseMaterials.set(idx, makeMat(0x000000, 1));
+    this.placedMaterials.set(idx, makeMat(0x0c141a, 1.12));
+    this.hoverPoolMaterials.set(idx, makeMat(0x163848, 1.28));
+    this.hoverPressedMaterials.set(idx, makeMat(0x1e4366, 1.32));
+  }
+
+  private initMaterialLibrary(): void {
     this.palette.forEach((def, idx) => {
-      const hex = def.hex ?? 0xeceff2;
-      const isDark = hex < 0x353535;
-      const roughness = isDark ? 0.48 : 0.36;
-      this.baseMaterials.set(idx, makeMat(hex, roughness, 0x000000));
-      this.placedMaterials.set(idx, makeMat(hex, roughness, 0x0c141a));
-      this.hoverPoolMaterials.set(idx, makeMat(hex, roughness, 0x163848));
-      this.hoverPressedMaterials.set(idx, makeMat(hex, roughness, 0x1e4366));
+      this.createColorMaterialSet(idx, def);
     });
+  }
+
+  public addSandboxColor(hex: number, name: string, transparent = false): number {
+    const existingIdx = this.palette.findIndex(
+      c => c.hex === hex && Boolean(c.transparent) === transparent
+    );
+    if (existingIdx >= 0) return existingIdx;
+
+    const idx = this.palette.length;
+    const def: ColorDef = {
+      code: 'C' + (idx + 1),
+      name: name || (transparent ? '自訂透明' : '自訂色'),
+      hex,
+      transparent,
+      opacity: transparent ? 0.42 : undefined,
+    };
+    this.palette.push(def);
+    this.createColorMaterialSet(idx, def);
+    return idx;
+  }
+
+  public getPalette(): ColorDef[] {
+    return [...this.palette];
   }
 
   private getMaterialForBrick(b: BrickInstance, hoverMode: 'none' | 'pool' | 'pressed'): THREE.MeshStandardMaterial {
@@ -477,9 +520,10 @@ export class BrickWorkshopEngine {
     this.subPadCx = this.subX0 + W(this.boardW) / 2;
     this.subPadCz = this.subZ0 + W(this.boardD) / 2;
 
-    const deskW = trayCount > 1 ? 66 : 54;
-    const deskD = 38;
-    const deskCenterX = trayCount > 1 ? 0.5 : 4.0;
+    const minDeskForSub = this.subPadCx + W(this.boardW) * 0.5 + 28;
+    const deskW = Math.max(trayCount > 1 ? 68 : 56, minDeskForSub);
+    const deskD = Math.max(38, W(this.boardD) + 30);
+    const deskCenterX = trayCount > 1 ? 1.5 : 5.0;
     const deskCenterZ = -2.8;
     const deskMat = new THREE.MeshStandardMaterial({
       color: 0x34261c,
@@ -1041,13 +1085,18 @@ export class BrickWorkshopEngine {
 
     const tray = this.trays[this.activeTray] ?? this.trays[0];
 
+    const layerCount = this.isSandbox ? 5 : Math.max(2, this.model.masks.length);
+    const boardFactor = Math.max(1.0, this.boardW / 18, this.boardD / 12);
+    const buildMidY = Math.max(0.55, Math.min(3.4, layerCount * BRICK_H * 0.36));
+    const tallFactor = Math.max(1.0, Math.min(1.32, (0.88 + layerCount * 0.025) * boardFactor));
+
     if (key === 'build') {
       return {
-        tgt: new THREE.Vector3(this.padCx - 0.5, 1.0, this.padCz),
+        tgt: new THREE.Vector3(this.padCx - 0.5, buildMidY, this.padCz),
         pos: new THREE.Vector3(
-          this.padCx - 3.0 * mobileScale,
-          14.6 * mobileScale,
-          this.padCz + 15.6 * mobileScale
+          this.padCx - 3.0 * mobileScale * tallFactor,
+          (14.0 * tallFactor) * mobileScale,
+          this.padCz + (15.0 * tallFactor) * mobileScale
         ),
       };
     }
@@ -1152,9 +1201,11 @@ export class BrickWorkshopEngine {
   ): BrickInstance {
     const { geo } = brickGeometry(shapeKey);
     const mat = this.baseMaterials.get(colorIdx) ?? this.baseMaterials.get(0)!;
+    const isTrans = Boolean(this.palette[colorIdx]?.transparent);
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.castShadow = !this.isSoftwareGl;
-    mesh.receiveShadow = true;
+    mesh.castShadow = !this.isSoftwareGl && !isTrans;
+    mesh.receiveShadow = !isTrans;
+    if (isTrans) mesh.renderOrder = 3;
     this.scene.add(mesh);
 
     const cells = SHAPES[shapeKey].cells;
@@ -1802,6 +1853,50 @@ export class BrickWorkshopEngine {
       if (!o.cellsWorld.some(c => cells.includes(c))) continue;
       top = Math.max(top, o.body.translation().y + BRICK_H / 2);
     }
+
+    // 支援懸挑／側向搭接造型（如仙人掌伸出枝幹、屋簷、火箭尾翼、選手高舉手臂）：
+    // 若正下方無積木，但該位置符合圖紙上 layer > 0 磚位且同層相鄰或次一層鄰格已有支撐，則自動對齊該層高
+    if (top === BUILD_TOP_Y && !this.isSandbox && (!ignore || ignore.size === 0)) {
+      const cellSet = new Set(cells);
+      const activeSub = pad === 'sub' ? this.getUpperSubAssembly() : null;
+      const candidatePlan = this.plan.find(p => {
+        if (p.shape !== b.shapeKey || p.color !== b.colorIdx || p.layer <= 0) return false;
+        if (pad === 'sub' && activeSub && (p.layer < activeSub.startLayer || p.layer > activeSub.endLayer)) {
+          return false;
+        }
+        return p.cellSet.size === cellSet.size && [...cellSet].every(c => p.cellSet.has(c));
+      });
+
+      if (candidatePlan) {
+        const localLayer =
+          pad === 'sub' && activeSub ? candidatePlan.layer - activeSub.startLayer : candidatePlan.layer;
+        const targetCenterY = BUILD_TOP_Y + BRICK_H * (localLayer + 0.5);
+        const belowCenterY = targetCenterY - BRICK_H;
+        const hasNeighborSupport = this.bricks.some(o => {
+          if (o === b || o.pad !== pad || (o.state !== 'placed' && o.state !== 'pressed') || !o.cellsWorld) {
+            return false;
+          }
+          const oy = o.body.translation().y;
+          const sameLayer = Math.abs(oy - targetCenterY) < BRICK_H * 0.45;
+          const prevLayer = Math.abs(oy - belowCenterY) < BRICK_H * 0.45;
+          if (!sameLayer && !prevLayer) return false;
+          for (const c1 of cells) {
+            const [x1, z1] = c1.split(',').map(Number);
+            for (const c2 of o.cellsWorld) {
+              const [x2, z2] = c2.split(',').map(Number);
+              if (Math.abs(x1 - x2) + Math.abs(z1 - z2) <= 1) {
+                return true;
+              }
+            }
+          }
+          return false;
+        });
+        if (hasNeighborSupport) {
+          return targetCenterY;
+        }
+      }
+    }
+
     return top + BRICK_H / 2;
   }
 
@@ -1921,6 +2016,7 @@ export class BrickWorkshopEngine {
     b.snapAnim = silent ? 0 : 1.0;
     b.mesh.material = this.getMaterialForBrick(b, 'none');
 
+    let hasVerticalSupport = false;
     for (const o of this.bricks) {
       if (o === b || o.pad !== pad || (o.state !== 'pressed' && o.state !== 'placed') || !o.cellsWorld) {
         continue;
@@ -1928,6 +2024,25 @@ export class BrickWorkshopEngine {
       const dy = Math.abs(dropY - o.body.translation().y);
       if (dy > BRICK_H * 0.4 && dy < BRICK_H * 2.2 && o.cellsWorld.some(c => b.cellsWorld!.includes(c))) {
         this.ufUnion(b, o);
+        hasVerticalSupport = true;
+      }
+    }
+    if (!hasVerticalSupport && dropY > BUILD_TOP_Y + BRICK_H * 0.8) {
+      for (const o of this.bricks) {
+        if (o === b || o.pad !== pad || (o.state !== 'pressed' && o.state !== 'placed') || !o.cellsWorld) {
+          continue;
+        }
+        const dy = Math.abs(dropY - o.body.translation().y);
+        if (dy < BRICK_H * 0.4) {
+          const touching = b.cellsWorld.some(c1 => {
+            const [x1, z1] = c1.split(',').map(Number);
+            return o.cellsWorld!.some(c2 => {
+              const [x2, z2] = c2.split(',').map(Number);
+              return Math.abs(x1 - x2) + Math.abs(z1 - z2) === 1;
+            });
+          });
+          if (touching) this.ufUnion(b, o);
+        }
       }
     }
     if (!silent) playClick('snap');
@@ -2518,6 +2633,9 @@ export class BrickWorkshopEngine {
     if (isComplete && !this.completedTriggered) {
       this.completedTriggered = true;
       playClick('complete');
+      this.spawnCompletionFireworks();
+      this.viewKey = 'build';
+      this.tweenCameraTo(this.getViewPreset('build'));
     } else if (!isComplete) {
       this.completedTriggered = false;
     }
@@ -2572,6 +2690,99 @@ export class BrickWorkshopEngine {
     }, 450);
   }
 
+  private spawnCompletionFireworks(): void {
+    if (this.disposed) return;
+
+    if (!this.fireworkGeo) {
+      this.fireworkGeo = new THREE.BoxGeometry(0.14, 0.14, 0.14);
+    }
+    if (this.fireworkMats.length === 0) {
+      const hexSet = new Set<number>([0xf4c430, 0x7fe3ff, 0xff6b9d, 0x9ef06b]);
+      for (const c of this.palette) {
+        hexSet.add(c.hex);
+      }
+      for (const hex of hexSet) {
+        this.fireworkMats.push(new THREE.MeshBasicMaterial({ color: hex }));
+      }
+    }
+
+    for (const t of this.fireworkTimers) window.clearTimeout(t);
+    this.fireworkTimers = [];
+
+    const topY = BUILD_TOP_Y + Math.max(3, this.model.masks.length) * BRICK_H + 1.1;
+    const offsets: Array<{ dx: number; dy: number; dz: number; delay: number }> = [
+      { dx: 0, dy: 0.3, dz: 0, delay: 0 },
+      { dx: -2.2, dy: 0.9, dz: -1.1, delay: 300 },
+      { dx: 2.3, dy: 0.6, dz: 1.0, delay: 620 },
+    ];
+
+    const spawnBurst = (cx: number, cy: number, cz: number) => {
+      if (this.disposed || !this.fireworkGeo || this.fireworkMats.length === 0) return;
+      const count = 32;
+      for (let i = 0; i < count; i++) {
+        const mat = this.fireworkMats[(i + Math.floor(Math.random() * 5)) % this.fireworkMats.length];
+        const mesh = new THREE.Mesh(this.fireworkGeo, mat);
+        mesh.position.set(cx, cy, cz);
+        this.scene.add(mesh);
+
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        const speed = 3.8 + Math.random() * 4.4;
+        const vel = new THREE.Vector3(
+          Math.sin(phi) * Math.cos(theta) * speed,
+          Math.abs(Math.cos(phi)) * speed * 0.85 + 2.4,
+          Math.sin(phi) * Math.sin(theta) * speed
+        );
+        const spin = new THREE.Vector3(
+          (Math.random() - 0.5) * 14,
+          (Math.random() - 0.5) * 14,
+          (Math.random() - 0.5) * 14
+        );
+        this.fireworkParticles.push({
+          mesh,
+          vel,
+          spin,
+          life: 0,
+          maxLife: 1.15 + Math.random() * 0.45,
+        });
+      }
+    };
+
+    for (const o of offsets) {
+      if (o.delay === 0) {
+        spawnBurst(this.padCx + o.dx, topY + o.dy, this.padCz + o.dz);
+      } else {
+        const timer = window.setTimeout(() => {
+          spawnBurst(this.padCx + o.dx, topY + o.dy, this.padCz + o.dz);
+        }, o.delay);
+        this.fireworkTimers.push(timer);
+      }
+    }
+  }
+
+  private updateFireworks(dt: number): void {
+    if (this.fireworkParticles.length === 0) return;
+    const drag = Math.max(0, 1 - dt * 1.4);
+    for (let i = this.fireworkParticles.length - 1; i >= 0; i--) {
+      const p = this.fireworkParticles[i];
+      p.life += dt;
+      if (p.life >= p.maxLife) {
+        this.scene.remove(p.mesh);
+        this.fireworkParticles.splice(i, 1);
+        continue;
+      }
+      p.vel.y -= 13.5 * dt;
+      p.vel.multiplyScalar(drag);
+      p.mesh.position.addScaledVector(p.vel, dt);
+      p.mesh.rotation.x += p.spin.x * dt;
+      p.mesh.rotation.y += p.spin.y * dt;
+      p.mesh.rotation.z += p.spin.z * dt;
+      const t = p.life / p.maxLife;
+      const s = Math.max(0.01, (1 - t * t) * 1.15);
+      p.mesh.scale.setScalar(s);
+    }
+  }
+
   private tick = (): void => {
     if (this.disposed) return;
     const dt = Math.min(this.clock.getDelta(), 0.05);
@@ -2586,6 +2797,7 @@ export class BrickWorkshopEngine {
 
     this.updateBoxOpening(dt);
     this.updateActivePour(dt);
+    this.updateFireworks(dt);
     this.updateInteraction(dt);
 
     this.accPhysics += dt;
@@ -2645,6 +2857,13 @@ export class BrickWorkshopEngine {
     window.clearTimeout(this.frameId);
     if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
     if (this.finderHighlightTimer !== null) window.clearTimeout(this.finderHighlightTimer);
+    for (const t of this.fireworkTimers) window.clearTimeout(t);
+    this.fireworkTimers = [];
+    for (const p of this.fireworkParticles) this.scene.remove(p.mesh);
+    this.fireworkParticles = [];
+    this.fireworkGeo?.dispose();
+    for (const m of this.fireworkMats) m.dispose();
+    this.fireworkMats = [];
 
     const canvas = this.renderer?.domElement;
     if (canvas) {

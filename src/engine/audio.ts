@@ -46,21 +46,55 @@ export function playClick(type: SoundKind = 'snap'): void {
     const now = audioCtx.currentTime;
 
     if (type === 'complete') {
-      const notes = [523.25, 659.25, 783.99, 1046.5];
+      // 明亮愉悅的完成慶祝號角和弦 + 三連發小煙火綻放音效
+      const notes = [523.25, 659.25, 783.99, 987.77, 1046.5];
       notes.forEach((freq, idx) => {
         if (!audioCtx) return;
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.type = 'triangle';
-        const t = now + idx * 0.085;
+        const t = now + idx * 0.08;
         osc.frequency.setValueAtTime(freq, t);
         gain.gain.setValueAtTime(0.001, t);
         gain.gain.linearRampToValueAtTime(0.14, t + 0.015);
-        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
         osc.connect(gain);
         gain.connect(audioCtx.destination);
         osc.start(t);
-        osc.stop(t + 0.26);
+        osc.stop(t + 0.3);
+      });
+
+      const burstTimes = [0.18, 0.48, 0.8];
+      burstTimes.forEach((delay, bIdx) => {
+        if (!audioCtx) return;
+        const bt = now + delay;
+        const src = audioCtx.createBufferSource();
+        src.buffer = getNoiseBuffer(audioCtx);
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(1600 + bIdx * 550, bt);
+        filter.Q.setValueAtTime(1.8, bt);
+        const nGain = audioCtx.createGain();
+        nGain.gain.setValueAtTime(0.001, bt);
+        nGain.gain.linearRampToValueAtTime(0.14, bt + 0.008);
+        nGain.gain.exponentialRampToValueAtTime(0.001, bt + 0.14);
+        src.connect(filter);
+        filter.connect(nGain);
+        nGain.connect(audioCtx.destination);
+        src.start(bt);
+        src.stop(bt + 0.16);
+
+        const chime = audioCtx.createOscillator();
+        const cGain = audioCtx.createGain();
+        chime.type = 'sine';
+        chime.frequency.setValueAtTime(1174.66 + bIdx * 196, bt);
+        chime.frequency.exponentialRampToValueAtTime(1567.98 + bIdx * 220, bt + 0.12);
+        cGain.gain.setValueAtTime(0.06, bt);
+        cGain.gain.exponentialRampToValueAtTime(0.001, bt + 0.16);
+        chime.connect(cGain);
+        cGain.connect(audioCtx.destination);
+        chime.start(bt);
+        chime.stop(bt + 0.18);
       });
       return;
     }

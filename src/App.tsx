@@ -22,6 +22,7 @@ import {
 import type {
   BrickModel,
   BuildStep,
+  ColorDef,
   FeelSettings,
   ManualViewMode,
   SavedBrickRecord,
@@ -61,15 +62,16 @@ type ActiveSession =
   | {
       kind: 'sandbox';
       initialRecords?: SavedBrickRecord[];
+      initialPalette?: ColorDef[];
     };
 
 const SANDBOX_MODEL: BrickModel = {
   id: 'sandbox',
   name: '無限自由模式',
-  subtitle: '8 色 ABS 零件無限供應 · 雙托盤自由創作',
+  subtitle: '調色盤自訂色彩＋透明支撐零件按需產出 · 20×14 加大雙托盤創作',
   difficulty: '標準',
   palette: SANDBOX_PALETTE,
-  board: { w: 18, d: 14 },
+  board: { w: 20, d: 14 },
   masks: [],
   packs: [],
 };
@@ -95,6 +97,10 @@ export default function App() {
   // Sandbox dispenser controls
   const [sbShape, setSbShape] = useState<ShapeKey>('1x2');
   const [sbColor, setSbColor] = useState(0);
+  const [sbPalette, setSbPalette] = useState<ColorDef[]>(SANDBOX_PALETTE);
+  const [sbCustomHex, setSbCustomHex] = useState('#e8a87c');
+  const [sbCustomTrans, setSbCustomTrans] = useState(false);
+  const [sbSpawnQty, setSbSpawnQty] = useState<1 | 4>(4);
 
   const canvasMountRef = useRef<HTMLDivElement>(null);
   const fpsSpanRef = useRef<HTMLSpanElement>(null);
@@ -183,6 +189,15 @@ export default function App() {
     baseElapsedRef.current = session.kind === 'model' ? session.initialElapsedSec : 0;
     setActiveStepIdx(0);
 
+    const activeSbPalette =
+      session.kind === 'sandbox' && session.initialPalette?.length
+        ? session.initialPalette
+        : SANDBOX_PALETTE;
+    if (session.kind === 'sandbox') {
+      setSbPalette(activeSbPalette);
+      setSbColor(c => (c < activeSbPalette.length ? c : 0));
+    }
+
     const model = session.kind === 'model' ? session.model : SANDBOX_MODEL;
     const engine = new BrickWorkshopEngine(
       mount,
@@ -198,7 +213,11 @@ export default function App() {
         onAutoSave: (records, openedPacks, boxOpened) => {
           if (cancelled) return;
           if (session.kind === 'sandbox') {
-            const store = saveSandboxState({ bricks: records, updatedAt: Date.now() });
+            const store = saveSandboxState({
+              bricks: records,
+              palette: engineRef.current?.getPalette() ?? activeSbPalette,
+              updatedAt: Date.now(),
+            });
             refreshSaveMeta(store);
           } else if (session.kind === 'model' && !completedRecordedRef.current) {
             const elapsedSec =
@@ -221,7 +240,7 @@ export default function App() {
       },
       {
         isSandbox: session.kind === 'sandbox',
-        sandboxPalette: SANDBOX_PALETTE,
+        sandboxPalette: activeSbPalette,
       }
     );
 
@@ -299,6 +318,7 @@ export default function App() {
     setSession({
       kind: 'sandbox',
       initialRecords: resume ? saveStore.sandbox?.bricks : undefined,
+      initialPalette: resume ? saveStore.sandbox?.palette : undefined,
     });
   };
 
@@ -308,7 +328,13 @@ export default function App() {
     if (engine && session.kind !== 'menu') {
       const { records, openedPacks } = engine.exportRecords();
       if (session.kind === 'sandbox') {
-        refreshSaveMeta(saveSandboxState({ bricks: records, updatedAt: Date.now() }));
+        refreshSaveMeta(
+          saveSandboxState({
+            bricks: records,
+            palette: engine.getPalette(),
+            updatedAt: Date.now(),
+          })
+        );
       } else if (session.kind === 'model' && !completedRecordedRef.current) {
         const elapsedSec =
           baseElapsedRef.current + Math.round((Date.now() - sessionStartMsRef.current) / 1000);
@@ -656,56 +682,131 @@ export default function App() {
             )}
 
             {session.kind === 'sandbox' && (
-              <div className="flex flex-wrap items-center gap-2 rounded-xl bg-[#11151b]/95 border border-white/12 p-2">
-                <div className="flex items-center gap-1">
-                  {(['1x1', '1x2', '1x4'] as ShapeKey[]).map(s => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => setSbShape(s)}
-                      className={`px-2 py-1 rounded-lg text-[11px] font-medium border ${
-                        sbShape === s
-                          ? 'bg-[#7fe3ff] text-[#0c141c] border-[#7fe3ff]'
-                          : 'bg-[#1a2028] text-[#aeb9c7] border-white/10'
-                      }`}
-                    >
-                      {SHAPES[s].label}
-                    </button>
-                  ))}
+              <div className="flex flex-col gap-1.5 rounded-xl bg-[#11151b]/95 border border-white/12 p-2.5 max-w-[560px]">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex items-center gap-1">
+                    {(['1x1', '1x2', '1x4'] as ShapeKey[]).map(s => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setSbShape(s)}
+                        className={`px-2 py-1 rounded-lg text-[11px] font-medium border whitespace-nowrap ${
+                          sbShape === s
+                            ? 'bg-[#7fe3ff] text-[#0c141c] border-[#7fe3ff]'
+                            : 'bg-[#1a2028] text-[#aeb9c7] border-white/10 hover:text-white'
+                        }`}
+                      >
+                        {SHAPES[s].label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1 bg-[#171c23] p-0.5 rounded-lg border border-white/10">
+                    {([1, 4] as const).map(qty => (
+                      <button
+                        key={qty}
+                        type="button"
+                        onClick={() => setSbSpawnQty(qty)}
+                        className={`px-2 py-0.5 rounded text-[11px] font-medium tabular-nums whitespace-nowrap ${
+                          sbSpawnQty === qty
+                            ? 'bg-[#2a3646] text-[#7fe3ff]'
+                            : 'text-[#8e9cab] hover:text-white'
+                        }`}
+                      >
+                        ×{qty} 顆
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => engineRef.current?.spawnSandboxBrick(sbShape, sbColor, sbSpawnQty)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#263242] hover:bg-[#314054] text-xs font-medium text-white whitespace-nowrap"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-[#7fe3ff]" />
+                    產出進籃 {((hud?.activeTray ?? 0) + 1)}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      refreshSaveMeta(saveSandboxState(null));
+                      setSession({ kind: 'sandbox' });
+                    }}
+                    title="清空重來"
+                    className="ml-auto p-1.5 rounded-lg text-[#9aa6b5] hover:text-[#ff9c9c] hover:bg-white/10"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <div className="flex items-center gap-1">
-                  {SANDBOX_PALETTE.map((c, idx) => (
+
+                {/* 現有色票 + 透明水晶支撐 + 調色盤自訂色彩 */}
+                <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-white/8">
+                  {sbPalette.map((c, idx) => (
                     <button
-                      key={c.name}
+                      key={`${c.code}_${idx}`}
                       type="button"
-                      title={c.name}
+                      title={c.transparent ? `${c.name}（透明材質）` : c.name}
                       onClick={() => setSbColor(idx)}
-                      className={`w-5 h-5 rounded-md border-2 transition-transform ${
-                        sbColor === idx ? 'border-white scale-110' : 'border-black/40'
+                      className={`w-5 h-5 rounded-md border-2 transition-transform shrink-0 ${
+                        sbColor === idx ? 'border-white scale-110' : c.transparent ? 'border-[#9fe4ff]/70' : 'border-black/40'
                       }`}
-                      style={{ backgroundColor: '#' + c.hex.toString(16).padStart(6, '0') }}
+                      style={{
+                        backgroundColor: '#' + c.hex.toString(16).padStart(6, '0'),
+                        opacity: c.transparent ? 0.58 : 1,
+                      }}
                     />
                   ))}
+
+                  <span className="text-[11px] text-[#9fb0c4] ml-1 whitespace-nowrap">
+                    {sbPalette[sbColor]?.name}
+                  </span>
+
+                  <div className="flex items-center gap-1.5 ml-auto pl-2 border-l border-white/10">
+                    <label
+                      className="flex items-center gap-1 text-[11px] text-[#b4c0ce] cursor-pointer"
+                      title="打開系統調色盤挑選任意積木顏色"
+                    >
+                      <input
+                        type="color"
+                        value={sbCustomHex}
+                        onChange={e => setSbCustomHex(e.target.value)}
+                        className="w-6 h-6 rounded border border-white/20 bg-transparent cursor-pointer p-0"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setSbCustomTrans(v => !v)}
+                      className={`px-2 py-1 rounded text-[10.5px] border whitespace-nowrap transition-colors ${
+                        sbCustomTrans
+                          ? 'bg-[#1d3442] border-[#7fe3ff] text-[#aeeaff]'
+                          : 'bg-[#181d25] border-white/12 text-[#8e9cab] hover:text-white'
+                      }`}
+                      title="切換自訂色為透明支撐／玻璃材質"
+                    >
+                      {sbCustomTrans ? '透明材質' : '實色'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const hexNum = parseInt(sbCustomHex.replace('#', ''), 16);
+                        const engine = engineRef.current;
+                        if (!engine || Number.isNaN(hexNum)) return;
+                        const idx = engine.addSandboxColor(
+                          hexNum,
+                          sbCustomTrans ? `透明 ${sbCustomHex.toUpperCase()}` : sbCustomHex.toUpperCase(),
+                          sbCustomTrans
+                        );
+                        setSbPalette(engine.getPalette());
+                        setSbColor(idx);
+                        engine.spawnSandboxBrick(sbShape, idx, sbSpawnQty);
+                      }}
+                      className="px-2 py-1 rounded-lg bg-[#f4c430] hover:bg-[#ffd54f] text-[#1a150f] text-[11px] font-semibold whitespace-nowrap"
+                    >
+                      調色並產出
+                    </button>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => engineRef.current?.spawnSandboxBrick(sbShape, sbColor, 4)}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#263242] hover:bg-[#314054] text-xs font-medium text-white whitespace-nowrap"
-                >
-                  <Plus className="w-3.5 h-3.5 text-[#7fe3ff]" />
-                  倒 4 顆入盤
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    refreshSaveMeta(saveSandboxState(null));
-                    setSession({ kind: 'sandbox' });
-                  }}
-                  title="清空重來"
-                  className="p-1.5 rounded-lg text-[#9aa6b5] hover:text-[#ff9c9c] hover:bg-white/10"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
               </div>
             )}
 

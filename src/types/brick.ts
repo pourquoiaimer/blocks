@@ -4,6 +4,8 @@ export interface ColorDef {
   code: string;
   name: string;
   hex: number;
+  transparent?: boolean;
+  opacity?: number;
 }
 
 export interface ShapeDef {
@@ -114,6 +116,7 @@ export interface ShowcaseEntry {
 
 export interface SandboxSaveState {
   bricks: SavedBrickRecord[];
+  palette?: ColorDef[];
   updatedAt: number;
 }
 
