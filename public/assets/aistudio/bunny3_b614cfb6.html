@@ -1,0 +1,1222 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>積木工坊 — 白兔 v3（手感重構版）</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #15120f;
+    font-family: -apple-system, "Segoe UI", "Noto Sans TC", sans-serif; user-select: none; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  #menu { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px;
+    background: radial-gradient(circle at 50% 35%, #2a241c, #100e0c 70%); color: #e8eef6; }
+  #menu h1 { font-size: 26px; margin: 0; letter-spacing: .16em; font-weight: 600; color: #f3e9d8; }
+  #menu .hint { color: #8b8172; font-size: 13px; margin-top: -8px; }
+  .card { width: 300px; border: 1px solid rgba(255,255,255,.14); border-radius: 14px;
+    padding: 16px 18px; background: rgba(255,255,255,.04); cursor: pointer; transition: .15s; }
+  .card:hover { background: rgba(255,255,255,.09); border-color: rgba(140,200,255,.5); transform: translateY(-1px); }
+  .card .t { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .card .s { font-size: 12px; color: #8f9aa8; line-height: 1.5; }
+  .card .badge { display: inline-block; font-size: 11px; color: #8ef0b4; margin-left: 6px; }
+
+  #hud { position: fixed; left: 14px; top: 12px; z-index: 10; color: #cfd6e0;
+    background: rgba(10,12,16,.82); border: 1px solid rgba(255,255,255,.09);
+    border-radius: 10px; padding: 9px 13px; font-size: 12px; line-height: 1.7;
+    pointer-events: none; max-width: 350px; backdrop-filter: blur(6px); display: none; }
+  #hud b { color: #7fe3ff; font-weight: 600; }
+  #hud .stat { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,.09); color: #8b95a3; }
+
+  #panel { position: fixed; right: 12px; top: 12px; bottom: 64px; width: 292px; z-index: 10;
+    background: rgba(14,17,22,.94); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 12px; padding: 11px 11px 8px; color: #d6dee9; font-size: 12px;
+    overflow-y: auto; backdrop-filter: blur(8px); display: none; }
+  #panel h2 { margin: 0 0 3px; font-size: 12.5px; color: #7fe3ff; font-weight: 600; }
+  #panel .subt { font-size: 10.5px; color: #7d8794; margin-bottom: 8px; }
+  .layer { display: flex; align-items: flex-start; gap: 8px; border: 1px solid rgba(255,255,255,.09);
+    border-radius: 10px; margin-bottom: 8px; padding: 8px; background: #1a2028; cursor: pointer; }
+  .layer.done { border-color: rgba(90,220,140,.45); background: #182a22; }
+  .layer.cur { border-color: rgba(127,227,255,.7); box-shadow: 0 0 0 1px rgba(127,227,255,.16) inset; }
+  .stepno { width: 28px; height: 28px; flex: 0 0 28px; border-radius: 50%; background: #e8eef6;
+    color: #12161c; font-weight: 700; font-size: 14px; display: flex; align-items: center;
+    justify-content: center; }
+  .layer.done .stepno { background: #6fdc9a; }
+  .stepmain { flex: 1; min-width: 0; }
+  .layer .head { display: flex; justify-content: space-between; font-weight: 600;
+    margin-bottom: 5px; font-size: 11.5px; }
+  .layer .head .cnt { color: #8b95a3; font-weight: 400; }
+  .layer.done .head .cnt { color: #6fdc9a; }
+  .parts { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px; }
+  .pchip { display: flex; align-items: center; gap: 4px; background: #0e1116;
+    border: 1px solid rgba(255,255,255,.11); border-radius: 5px; padding: 3px 6px; font-size: 10.5px;
+    color: #c8d2de; }
+  .pbar { display: flex; }
+  .pbar i { width: 6.5px; height: 6.5px; background: #eceff2; border: 1px solid #12161c;
+    border-radius: 1px; margin-left: -1px; display: block; }
+
+  .grid { display: grid; gap: 0; margin-bottom: 4px; padding: 3px;
+    background: #0e1116; border-radius: 4px; }
+  .cell { position: relative; width: 100%; aspect-ratio: 1; box-sizing: border-box; }
+  .cell.on::after { content: ''; position: absolute; inset: 30%; border-radius: 50%;
+    background: rgba(0,0,0,.20); }
+  .gg { background: rgba(120,130,145,.16); }
+
+  #packs { position: fixed; left: 12px; bottom: 12px; z-index: 12; display: none; gap: 8px; }
+  .pack { position: relative; min-width: 88px; text-align: left; font: 11.5px/1.35 inherit;
+    color: #dfe7f1; background: rgba(28,34,44,.94); border: 1px solid rgba(255,255,255,.16);
+    border-radius: 10px; padding: 8px 11px; cursor: pointer; transition: .12s; }
+  .pack:hover { background: rgba(46,56,70,.96); }
+  .pack.opened { opacity: .35; cursor: default; }
+  .pack .n { font-weight: 600; display: block; margin-bottom: 2px; color: #9fd8ff; }
+  .pack .c { color: #8693a3; }
+
+  #viewBtn { position: fixed; right: 12px; bottom: 12px; z-index: 12; display: none; gap: 8px; }
+  #viewBtn button { font: 12px/1 inherit; color: #dbe4ef; background: rgba(30,36,46,.92);
+    border: 1px solid rgba(255,255,255,.14); border-radius: 8px; padding: 9px 13px; cursor: pointer; }
+  #viewBtn button:hover { background: rgba(48,58,72,.95); }
+
+  #zoom { position: fixed; inset: 0; z-index: 40; display: none; align-items: center;
+    justify-content: center; background: rgba(6,8,11,.85); }
+  #zoom .box { background: #171b22; border: 1px solid rgba(255,255,255,.14);
+    border-radius: 14px; padding: 16px 18px; color: #dfe7f1; }
+  #zoom .box h3 { margin: 0 0 10px; font-size: 14px; color: #7fe3ff; }
+  #zoom .grid { width: 460px; max-width: 85vw; padding: 4px; }
+  #zoom .tip { margin-top: 10px; font-size: 11.5px; color: #8794a4; }
+
+  #done { position: fixed; left: 50%; top: 40%; transform: translate(-50%,-50%); z-index: 30;
+    display: none; text-align: center; padding: 20px 32px; border-radius: 16px;
+    background: rgba(20,40,30,.94); border: 1px solid rgba(90,220,140,.6); color: #a8f5c8; }
+  #done b { display: block; font-size: 20px; margin-bottom: 6px; }
+
+  #loading { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center;
+    justify-content: center; background: #15120f; color: #9fb0c4; font-size: 15px;
+    padding: 20px; text-align: center; transition: opacity .3s; }
+  #loading.done { opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="loading">載入物理引擎與 3D 場景…</div>
+
+<div id="menu">
+  <h1>積 木 工 坊</h1>
+  <div class="hint">白兔 v3 · 平滑拖曳、即時磁吸、放開即壓緊</div>
+  <div class="card" id="pickBunny">
+    <div class="t">白兔 <span class="badge">99 顆 · 9 層</span></div>
+    <div class="s">3 包零件 · 分層說明書 · 拿起、對位、放開喀嗒卡緊</div>
+  </div>
+</div>
+
+<div id="hud">
+  <div><b>左鍵拖積木</b>　抓起並對齊（<b>R</b> 轉 90°）</div>
+  <div><b>放開左鍵</b>　在綠框處直接卡緊；拖回盤內即放回</div>
+  <div><b>Shift+點已拼積木</b>　只拔這一顆（不連帶整組）</div>
+  <div><b>左鍵拖空白</b>　手翻找　<b>右鍵拖</b>　轉視角　<b>Tab</b>　切視角</div>
+  <div class="stat" id="stat">—</div>
+</div>
+
+<div id="panel">
+  <h2>白兔 · 分層說明書</h2>
+  <div class="subt">點任一層可放大；灰＝下層已完成，彩＝本層</div>
+  <div id="layers"></div>
+</div>
+
+<div id="packs"></div>
+<div id="viewBtn">
+  <button id="btnView">切換視角（Tab）</button>
+</div>
+
+<div id="zoom"><div class="box">
+  <h3 id="zoomTitle"></h3>
+  <div class="grid" id="zoomGrid"></div>
+  <div class="tip">點任意處關閉</div>
+</div></div>
+
+<div id="done"><b>完成 ✓</b><span id="doneSub"></span></div>
+
+<script>
+window.addEventListener('error', e => {
+  if (window.__ready) return;
+  const el = document.getElementById('loading');
+  if (el) { el.textContent = '載入錯誤：' + e.message; el.classList.remove('done'); }
+});
+window.addEventListener('unhandledrejection', e => {
+  if (window.__ready) return;
+  const el = document.getElementById('loading');
+  const m = (e.reason && (e.reason.message || String(e.reason))) || '未知錯誤';
+  if (el) { el.textContent = '引擎初始化失敗：' + m.slice(0, 260); el.classList.remove('done'); }
+});
+</script>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import RAPIER from 'https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.21.0/dist/rapier.mjs';
+
+await RAPIER.init();
+
+/* ═══════ 輕量 Web Audio 塑膠喀嗒音效 ═══════ */
+let audioCtx = null;
+function playClick(type = 'snap') {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    if (type === 'snap') {
+      osc.frequency.setValueAtTime(520, now);
+      osc.frequency.exponentialRampToValueAtTime(140, now + 0.055);
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+    } else if (type === 'pick') {
+      osc.frequency.setValueAtTime(260, now);
+      osc.frequency.exponentialRampToValueAtTime(420, now + 0.04);
+      gain.gain.setValueAtTime(0.09, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.045);
+    } else {
+      osc.frequency.setValueAtTime(340, now);
+      osc.frequency.exponentialRampToValueAtTime(280, now + 0.035);
+      gain.gain.setValueAtTime(0.07, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+    }
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(now);
+    osc.stop(now + 0.07);
+  } catch (e) {}
+}
+
+/* ═══════ 基本尺寸 ═══════ */
+const CELL = 0.55, BRICK_H = CELL * 1.2, STUD_R = CELL * 0.30, STUD_H = CELL * 0.18;
+const W = (g) => g * CELL;
+
+const PALETTE = [{ name: '白', hex: 0xeceff2 }, { name: '黑', hex: 0x22262b }];
+const WHITE = 0, BLACK = 1;
+
+const SHAPES = {
+  '1x1': { cells: [[0, 0]], label: '單格' },
+  '1x2': { cells: [[0, 0], [1, 0]], label: '兩格' },
+  '1x4': { cells: [[0, 0], [1, 0], [2, 0], [3, 0]], label: '四格' },
+};
+
+/* ═══════ 兔子遮罩（12x8） ═══════ */
+const BODY = [
+  "...XXXXXX...",
+  "..XXXXXXXX..",
+  ".XXXXXXXXXX.",
+  "XXXXXXXXXXXX",
+  "XXXXXXXXXXXX",
+  ".XXXXXXXXXX.",
+  "..XXXXXXXX..",
+  "...XXXXXX...",
+];
+const HEAD_LO = [
+  "............",
+  "...XXXXXX...",
+  "..XXXXXXXX..",
+  "..XXXXXXXX..",
+  "..XXXXXXXX..",
+  "..XXXXXXXX..",
+  "...XXXXXX...",
+  "............",
+];
+const HEAD_UP = [
+  "............",
+  "....XXXX....",
+  "...XXXXXX...",
+  "...XXXXXX...",
+  "..XXXXXXXX..",
+  "...EXXXXE...",
+  "....XXXX....",
+  "............",
+];
+const EARS = [
+  "............",
+  "............",
+  "...XX..XX...",
+  "...XX..XX...",
+  "............",
+  "............",
+  "............",
+  "............",
+];
+const LAYER_MASKS = [BODY, BODY, BODY, HEAD_LO, HEAD_UP, EARS, EARS, EARS, EARS];
+const MODEL = { w: 12, d: 8 };
+const BOARD = { w: 16, d: 12 };
+const OFX = Math.floor((BOARD.w - MODEL.w) / 2);
+const OFZ = Math.floor((BOARD.d - MODEL.d) / 2);
+
+function fillMask(rows, preferVertical) {
+  const H = rows.length, Wd = rows[0].length;
+  const free = rows.map(r => r.split('').map(c => c !== '.'));
+  const eye = rows.map(r => r.split('').map(c => c === 'E'));
+  const out = [];
+  const can = (x, z, w, d) => {
+    for (let dz = 0; dz < d; dz++) for (let dx = 0; dx < w; dx++) {
+      const xx = x + dx, zz = z + dz;
+      if (xx < 0 || zz < 0 || xx >= Wd || zz >= H) return false;
+      if (!free[zz][xx] || eye[zz][xx]) return false;
+    }
+    return true;
+  };
+  const take = (x, z, w, d, shape, rot, color) => {
+    for (let dz = 0; dz < d; dz++) for (let dx = 0; dx < w; dx++) free[z + dz][x + dx] = false;
+    out.push({ shape, rot, color, gx: x, gz: z });
+  };
+  const order = preferVertical
+    ? [[1, 4, '1x4', 90], [4, 1, '1x4', 0], [1, 2, '1x2', 90], [2, 1, '1x2', 0]]
+    : [[4, 1, '1x4', 0], [1, 4, '1x4', 90], [2, 1, '1x2', 0], [1, 2, '1x2', 90]];
+  for (const [w, d, s, rot] of order) {
+    for (let z = 0; z < H; z++) for (let x = 0; x < Wd; x++) if (can(x, z, w, d)) take(x, z, w, d, s, rot, WHITE);
+  }
+  for (let z = 0; z < H; z++) for (let x = 0; x < Wd; x++) {
+    if (free[z][x]) {
+      out.push({ shape: '1x1', rot: 0, color: eye[z][x] ? BLACK : WHITE, gx: x, gz: z });
+      free[z][x] = false;
+    }
+  }
+  return out;
+}
+
+const PLAN = [];
+LAYER_MASKS.forEach((mask, layer) => {
+  for (const b of fillMask(mask, layer % 2 === 1)) {
+    PLAN.push({ ...b, gx: b.gx + OFX, gz: b.gz + OFZ, layer });
+  }
+});
+
+/* ═══════ 幾何 ═══════ */
+function rotCells(cells, rot) {
+  const r = ((rot % 360) + 360) % 360;
+  let out = cells.map(([x, z]) => {
+    if (r === 0) return [x, z];
+    if (r === 90) return [-z, x];
+    if (r === 180) return [-x, -z];
+    return [z, -x];
+  });
+  const mnX = Math.min(...out.map(c => c[0])), mnZ = Math.min(...out.map(c => c[1]));
+  return out.map(([x, z]) => [x - mnX, z - mnZ]);
+}
+function bboxOf(cells) {
+  const xs = cells.map(c => c[0]), zs = cells.map(c => c[1]);
+  return { w: Math.max(...xs) + 1, d: Math.max(...zs) + 1 };
+}
+function outlineLoop(cells) {
+  const has = new Set(cells.map(([x, z]) => x + ',' + z));
+  const outs = new Map();
+  const push = (a, b) => { if (!outs.has(a)) outs.set(a, []); outs.get(a).push(b); };
+  for (const [x, z] of cells) {
+    if (!has.has(x + ',' + (z - 1))) push(`${x},${z}`, `${x + 1},${z}`);
+    if (!has.has((x + 1) + ',' + z)) push(`${x + 1},${z}`, `${x + 1},${z + 1}`);
+    if (!has.has(x + ',' + (z + 1))) push(`${x + 1},${z + 1}`, `${x},${z + 1}`);
+    if (!has.has((x - 1) + ',' + z)) push(`${x},${z + 1}`, `${x},${z}`);
+  }
+  const start = outs.keys().next().value;
+  if (!start) return null;
+  const loop = [start];
+  let cur = start, prev = null;
+  for (let i = 0; i < 300; i++) {
+    const list = outs.get(cur) || [];
+    const nxt = list.find(v => v !== prev) ?? list[0];
+    if (!nxt) break;
+    if (nxt === start) return loop;
+    loop.push(nxt); prev = cur; cur = nxt;
+  }
+  return loop.length >= 3 ? loop : null;
+}
+
+const geoCache = new Map();
+function brickGeometry(shapeKey) {
+  if (geoCache.has(shapeKey)) return geoCache.get(shapeKey);
+  const cells = SHAPES[shapeKey].cells;
+  const bb = bboxOf(cells);
+  const cx = bb.w / 2, cz = bb.d / 2;
+  const parts = [];
+  const pushGeo = (g) => parts.push(g.index ? g.toNonIndexed() : g);
+  const loop = outlineLoop(cells);
+  if (loop) {
+    const shape = new THREE.Shape();
+    loop.forEach((key, i) => {
+      const [x, z] = key.split(',').map(Number);
+      const px = W(x) - W(cx), py = -(W(z) - W(cz));
+      if (i === 0) shape.moveTo(px, py); else shape.lineTo(px, py);
+    });
+    shape.closePath();
+    const body = new THREE.ExtrudeGeometry(shape, { depth: BRICK_H, bevelEnabled: false });
+    body.rotateX(-Math.PI / 2);
+    body.translate(0, -BRICK_H / 2, 0);
+    pushGeo(body);
+  }
+  for (const [x, z] of cells) {
+    const stud = new THREE.CylinderGeometry(STUD_R, STUD_R, STUD_H, 12);
+    stud.translate(W(x + 0.5) - W(cx), BRICK_H / 2 + STUD_H / 2, W(z + 0.5) - W(cz));
+    pushGeo(stud);
+  }
+  const g = { geo: mergeGeometries(parts), w: bb.w, d: bb.d };
+  geoCache.set(shapeKey, g);
+  return g;
+}
+
+function worldCells(shape, rot, gx, gz) {
+  return rotCells(SHAPES[shape].cells, rot).map(([x, z]) => `${gx + x},${gz + z}`);
+}
+for (const p of PLAN) {
+  p.cells = worldCells(p.shape, p.rot, p.gx, p.gz);
+  p.bb = bboxOf(rotCells(SHAPES[p.shape].cells, p.rot));
+  p.cellSet = new Set(p.cells);
+}
+
+/* ═══════ 場景 ═══════ */
+const initW = window.innerWidth || 1024;
+const initH = window.innerHeight || 768;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+renderer.setSize(initW, initH);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1512);
+scene.fog = new THREE.Fog(0x1a1512, 32, 60);
+
+const BUILD = { x0: 0, z0: -6.6, w: BOARD.w + 4, d: BOARD.d + 4 };
+const TRAY = { x0: -10, z0: -5, w: 14, d: 18 };
+
+const UX0 = BUILD.x0 + (BUILD.w - BOARD.w) / 2;
+const UZ0 = BUILD.z0 + (BUILD.d - BOARD.d) / 2;
+const bX0 = W(UX0), bZ0 = W(UZ0);
+const BUILD_TOP_Y = 0.12;
+
+const VIEWS = {
+  build: { pos: new THREE.Vector3(1.6, 12.6, 14.2), tgt: new THREE.Vector3(1.6, 1.0, -1.2) },
+  wide:  { pos: new THREE.Vector3(-1.5, 19.0, 19.0), tgt: new THREE.Vector3(-1.5, 0.6, -1.0) },
+};
+let viewKey = 'build';
+let camTween = null;
+
+function switchView() {
+  viewKey = viewKey === 'build' ? 'wide' : 'build';
+  const to = VIEWS[viewKey];
+  camTween = {
+    p0: camera.position.clone(), t0: controls.target.clone(),
+    p1: to.pos.clone(), t1: to.tgt.clone(), k: 0,
+  };
+}
+
+const camera = new THREE.PerspectiveCamera(45, initW / initH, 0.05, 130);
+camera.position.copy(VIEWS.build.pos);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(VIEWS.build.tgt);
+controls.enableDamping = true;
+controls.dampingFactor = 0.09;
+controls.maxPolarAngle = 1.33;
+controls.minDistance = 5;
+controls.maxDistance = 42;
+controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+controls.touches = { ONE: -1, TWO: THREE.TOUCH.DOLLY_ROTATE };
+controls.update();
+
+scene.add(new THREE.HemisphereLight(0xe6eeff, 0x2c241c, 1.35));
+const key = new THREE.DirectionalLight(0xfff1dc, 2.5);
+key.position.set(6, 15, 8);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.near = 0.5; key.shadow.camera.far = 46;
+key.shadow.camera.left = -14; key.shadow.camera.right = 14;
+key.shadow.camera.top = 13; key.shadow.camera.bottom = -13;
+key.shadow.bias = -0.0005;
+scene.add(key);
+const fill2 = new THREE.DirectionalLight(0xa8c8ff, 0.45);
+fill2.position.set(-9, 7, -8);
+scene.add(fill2);
+
+/* ═══════ 物理與環境（修復托盤底板碰撞體） ═══════ */
+const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+world.timestep = 1 / 60;
+try { world.integrationParameters.numSolverIterations = 8; } catch (e) {}
+
+const DESK = { w: 34, d: 24 };
+const deskMat = new THREE.MeshStandardMaterial({ color: 0x4a3728, roughness: 0.88, metalness: 0.02 });
+const desk = new THREE.Mesh(new THREE.BoxGeometry(DESK.w, 0.6, DESK.d), deskMat);
+desk.position.set(-2, -0.3, 0);
+desk.receiveShadow = true;
+scene.add(desk);
+
+for (let i = 0; i < 26; i++) {
+  const y = 0.002 + i * 0.0005;
+  const g = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-2 - DESK.w / 2, y, -DESK.d / 2 + (i + 0.5) * (DESK.d / 26)),
+    new THREE.Vector3(-2 + DESK.w / 2, y, -DESK.d / 2 + (i + 0.5) * (DESK.d / 26)),
+  ]);
+  scene.add(new THREE.Line(g, new THREE.LineBasicMaterial({
+    color: 0x5b452f, transparent: true, opacity: 0.35 })));
+}
+const deskBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(-2, -0.3, 0));
+world.createCollider(RAPIER.ColliderDesc.cuboid(DESK.w / 2, 0.3, DESK.d / 2)
+  .setFriction(0.95).setRestitution(0), deskBody);
+
+// 組裝墊
+const padW = W(BOARD.w) + CELL * 1.2, padD = W(BOARD.d) + CELL * 1.2;
+const pad = new THREE.Mesh(new THREE.BoxGeometry(padW, 0.08, padD),
+  new THREE.MeshStandardMaterial({ color: 0x2f3a44, roughness: 0.95, metalness: 0 }));
+pad.position.set(bX0 + W(BOARD.w) / 2, BUILD_TOP_Y - 0.04, bZ0 + W(BOARD.d) / 2);
+pad.receiveShadow = true;
+scene.add(pad);
+const padBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed()
+  .setTranslation(bX0 + W(BOARD.w) / 2, BUILD_TOP_Y - 0.04, bZ0 + W(BOARD.d) / 2));
+world.createCollider(RAPIER.ColliderDesc.cuboid(padW / 2, 0.04, padD / 2)
+  .setFriction(0.95).setRestitution(0), padBody);
+
+// 格線
+const gridMat = new THREE.LineBasicMaterial({ color: 0x9fb4cc, transparent: true, opacity: 0.36 });
+for (let i = 0; i <= BOARD.w; i++) {
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(bX0 + W(i), BUILD_TOP_Y + 0.002, bZ0),
+    new THREE.Vector3(bX0 + W(i), BUILD_TOP_Y + 0.002, bZ0 + W(BOARD.d)),
+  ]), gridMat));
+}
+for (let i = 0; i <= BOARD.d; i++) {
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(bX0, BUILD_TOP_Y + 0.002, bZ0 + W(i)),
+    new THREE.Vector3(bX0 + W(BOARD.w), BUILD_TOP_Y + 0.002, bZ0 + W(i)),
+  ]), gridMat));
+}
+
+// 托盤（補齊底板物理碰撞體，零件不再半陷盤底）
+const trayW = W(TRAY.w), trayD = W(TRAY.d);
+const trayCx = TRAY.x0 + trayW / 2, trayCz = TRAY.z0 + trayD / 2;
+const TRAY_FLOOR_TOP = 0.24;
+const trayMat = new THREE.MeshStandardMaterial({ color: 0x3d4a5a, roughness: 0.7, metalness: 0.1 });
+const trayFloor = new THREE.Mesh(new THREE.BoxGeometry(trayW, 0.16, trayD), trayMat);
+trayFloor.position.set(trayCx, TRAY_FLOOR_TOP - 0.08, trayCz);
+trayFloor.receiveShadow = true;
+scene.add(trayFloor);
+
+const trayFloorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed()
+  .setTranslation(trayCx, TRAY_FLOOR_TOP - 0.08, trayCz));
+world.createCollider(RAPIER.ColliderDesc.cuboid(trayW / 2, 0.08, trayD / 2)
+  .setFriction(0.85).setRestitution(0.02), trayFloorBody);
+
+const wallH = CELL * 2.2, wt = CELL * 0.42;
+const trayWalls = [
+  { x: trayCx, z: trayCz + trayD / 2 + wt / 2, hx: trayW / 2 + wt, hz: wt / 2 },
+  { x: trayCx, z: trayCz - trayD / 2 - wt / 2, hx: trayW / 2 + wt, hz: wt / 2 },
+  { x: trayCx + trayW / 2 + wt / 2, z: trayCz, hx: wt / 2, hz: trayD / 2 },
+  { x: trayCx - trayW / 2 - wt / 2, z: trayCz, hx: wt / 2, hz: trayD / 2 },
+];
+for (const w of trayWalls) {
+  const b = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(w.x, wallH / 2 + TRAY_FLOOR_TOP, w.z));
+  world.createCollider(RAPIER.ColliderDesc.cuboid(w.hx, wallH / 2, w.hz)
+    .setFriction(0.4).setRestitution(0), b);
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w.hx * 2, wallH, w.hz * 2), trayMat);
+  m.position.set(w.x, wallH / 2 + TRAY_FLOOR_TOP, w.z);
+  m.castShadow = true; m.receiveShadow = true;
+  scene.add(m);
+}
+
+/* ═══════ 積木 ═══════ */
+let bricks = [];
+let seq = 0;
+
+function makeMaterial(c) {
+  return new THREE.MeshStandardMaterial({
+    color: PALETTE[c].hex, roughness: c === BLACK ? 0.5 : 0.36, metalness: 0, emissive: 0x000000
+  });
+}
+function createBrick(shapeKey, colorIdx, pos, rot) {
+  const { geo } = brickGeometry(shapeKey);
+  const mat = makeMaterial(colorIdx);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  scene.add(mesh);
+
+  const cells = SHAPES[shapeKey].cells;
+  const bb = bboxOf(cells);
+  const cx = bb.w / 2, cz = bb.d / 2;
+  const body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
+    .setTranslation(pos.x, pos.y, pos.z)
+    .setRotation({ x: 0, y: Math.sin(rot * Math.PI / 360), z: 0, w: Math.cos(rot * Math.PI / 360) })
+    .setLinearDamping(0.2).setAngularDamping(0.65).setCcdEnabled(true));
+  const colliders = [];
+  for (const [x, z] of cells) {
+    colliders.push(world.createCollider(
+      RAPIER.ColliderDesc.cuboid(CELL / 2 * 0.97, BRICK_H / 2, CELL / 2 * 0.97)
+        .setTranslation(W(x + 0.5) - W(cx), 0, W(z + 0.5) - W(cz))
+        .setDensity(0.6).setFriction(0.9).setRestitution(0.02), body));
+  }
+  const brick = {
+    id: seq++, body, colliders, mesh, mat, shapeKey, colorIdx, rot, bb,
+    state: 'pool', cellsWorld: null, snapAnim: 0
+  };
+  mesh.userData.brick = brick;
+  bricks.push(brick);
+  return brick;
+}
+function setColliders(b, on) { for (const c of b.colliders) c.setEnabled(on); }
+
+/* ═══════ 分包 ═══════ */
+const PACKS = [[], [], []];
+for (const p of PLAN) PACKS[p.layer <= 2 ? 0 : (p.layer <= 4 ? 1 : 2)].push(p);
+const packOpened = [false, false, false];
+
+function openPack(i) {
+  if (packOpened[i]) return;
+  packOpened[i] = true;
+  const m = W(1.3);
+  PACKS[i].forEach((spec, k) => {
+    const x = TRAY.x0 + m + Math.random() * Math.max(0.05, trayW - m * 2);
+    const z = TRAY.z0 + m + Math.random() * Math.max(0.05, trayD - m * 2);
+    const y = TRAY_FLOOR_TOP + BRICK_H * (2.5 + (k % 10) * 0.85) + 0.4;
+    createBrick(spec.shape, spec.color, { x, y, z }, [0, 90, 180, 270][Math.floor(Math.random() * 4)]);
+  });
+  const el = document.querySelectorAll('.pack')[i];
+  if (el) el.classList.add('opened');
+  renderPanel();
+}
+function buildPackBar() {
+  const bar = document.getElementById('packs');
+  bar.innerHTML = '';
+  PACKS.forEach((list, i) => {
+    const c = {};
+    for (const p of list) c[SHAPES[p.shape].label] = (c[SHAPES[p.shape].label] || 0) + 1;
+    const btn = document.createElement('button');
+    btn.className = 'pack';
+    btn.innerHTML = `<span class="n">第 ${i + 1} 包</span><span class="c">${list.length} 顆 · ` +
+      Object.entries(c).map(([k, n]) => `${k}×${n}`).join(' ') + '</span>';
+    btn.onclick = () => openPack(i);
+    bar.appendChild(btn);
+  });
+}
+
+/* ═══════ 抓取、投影引導與平滑拖曳 ═══════ */
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(BUILD_TOP_Y + BRICK_H * 0.5));
+const hitVec = new THREE.Vector3();
+
+const state = {
+  held: null,
+  group: [],
+  hovering: [],
+  hoverKey: '',
+  fingerMode: false,
+  fingerTarget: new THREE.Vector3(),
+  pointerReady: false,
+  targetPos: new THREE.Vector3(),
+  visualPos: new THREE.Vector3(),
+  snapValid: false,
+  snapGx: 0,
+  snapGz: 0,
+  snapY: BUILD_TOP_Y,
+  lastSnapKey: '',
+};
+
+function pointerNDC(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+  ndc.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+  state.pointerReady = true;
+}
+function rayToFixedPlane(y) {
+  dragPlane.constant = -y;
+  raycaster.setFromCamera(ndc, camera);
+  return raycaster.ray.intersectPlane(dragPlane, hitVec) ? hitVec.clone() : null;
+}
+function pickBrick() {
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObjects(bricks.map(b => b.mesh), false);
+  return hits.length ? hits[0].object.userData.brick : null;
+}
+
+// 幽靈預覽（直接複用快取幾何，不再每幀 dispose/clone）
+const ghostMat = new THREE.MeshBasicMaterial({
+  color: 0x6cf0a8, transparent: true, opacity: 0.38, depthWrite: false, side: THREE.DoubleSide
+});
+const ghostMesh = new THREE.Mesh(brickGeometry('1x1').geo, ghostMat);
+ghostMesh.visible = false;
+ghostMesh.renderOrder = 10;
+scene.add(ghostMesh);
+
+// 垂直落點光柱與地面圓環
+const dropLine = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.038, 0.038, 1, 8),
+  new THREE.MeshBasicMaterial({ color: 0x6cf0a8, transparent: true, opacity: 0.65, depthTest: false })
+);
+dropLine.visible = false;
+dropLine.renderOrder = 20;
+scene.add(dropLine);
+
+const dropRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.20, 0.30, 24),
+  new THREE.MeshBasicMaterial({ color: 0x6cf0a8, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthTest: false })
+);
+dropRing.rotation.x = -Math.PI / 2;
+dropRing.visible = false;
+dropRing.renderOrder = 21;
+scene.add(dropRing);
+
+function showDropGuide(x, yTop, yBottom, z) {
+  const len = Math.max(0.02, yTop - yBottom);
+  dropLine.position.set(x, (yTop + yBottom) / 2, z);
+  dropLine.scale.set(1, len, 1);
+  dropLine.visible = true;
+  dropRing.position.set(x, yBottom + 0.015, z);
+  dropRing.visible = true;
+}
+function hideDropGuide() {
+  dropLine.visible = false;
+  dropRing.visible = false;
+}
+
+function surfaceYAt(wx, wz) {
+  const gx = Math.floor((wx - bX0) / CELL);
+  const gz = Math.floor((wz - bZ0) / CELL);
+  if (gx < 0 || gz < 0 || gx >= BOARD.w || gz >= BOARD.d) return TRAY_FLOOR_TOP;
+  const key = `${gx},${gz}`;
+  let top = BUILD_TOP_Y;
+  for (const o of bricks) {
+    if ((o.state !== 'placed' && o.state !== 'pressed') || !o.cellsWorld) continue;
+    if (!o.cellsWorld.includes(key)) continue;
+    top = Math.max(top, o.body.translation().y + BRICK_H / 2);
+  }
+  return top;
+}
+
+function supportTopY(b, gx, gz) {
+  const cells = worldCells(b.shapeKey, b.rot, gx, gz);
+  let top = BUILD_TOP_Y;
+  for (const o of bricks) {
+    if (o === b) continue;
+    if (o.state !== 'placed' && o.state !== 'pressed') continue;
+    if (!o.cellsWorld) continue;
+    if (!o.cellsWorld.some(c => cells.includes(c))) continue;
+    top = Math.max(top, o.body.translation().y + BRICK_H / 2);
+  }
+  return top + BRICK_H / 2;
+}
+
+const uf = new Map();
+function ufFind(b) { while (uf.get(b) && uf.get(b) !== b) b = uf.get(b); return b; }
+function ufUnion(a, b) { const ra = ufFind(a), rb = ufFind(b); if (ra !== rb) uf.set(ra, rb); }
+function groupOf(b) {
+  const root = ufFind(b);
+  return bricks.filter(x => (x.state === 'pressed' || x.state === 'placed') && ufFind(x) === root);
+}
+
+function startHold(brick, single) {
+  if (!brick) return;
+  playClick('pick');
+  if (brick.state === 'pressed' || brick.state === 'placed') {
+    const g = (single || brick.state === 'placed') ? [brick] : groupOf(brick);
+    state.group = g;
+    state.held = brick;
+    const leadPos = brick.mesh.position.clone();
+    for (const b of g) {
+      b._off = b.mesh.position.clone().sub(leadPos);
+      b.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+      setColliders(b, false);
+      b.state = 'held';
+      b.cellsWorld = null;
+      uf.delete(b);
+      b.mat.emissive.setHex(0x000000);
+    }
+    state.hovering = []; state.hoverKey = '';
+  } else {
+    state.group = [brick];
+    state.held = brick;
+    brick._off = new THREE.Vector3(0, 0, 0);
+    brick.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    setColliders(brick, false);
+    brick.state = 'held';
+    brick.cellsWorld = null;
+    brick.rot = 0;
+    brick.bb = bboxOf(SHAPES[brick.shapeKey].cells);
+    brick.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+  }
+
+  const t = brick.body.translation();
+  state.visualPos.set(t.x, t.y + BRICK_H * 0.8, t.z);
+  state.targetPos.copy(state.visualPos);
+  state.snapValid = false;
+  state.lastSnapKey = '';
+  ghostMesh.geometry = brickGeometry(brick.shapeKey).geo;
+  renderPanel();
+}
+
+function pressBrickAt(b, gx, gz, dropY) {
+  const bb = bboxOf(rotCells(SHAPES[b.shapeKey].cells, b.rot));
+  const wx = bX0 + W(gx + bb.w / 2);
+  const wz = bZ0 + W(gz + bb.d / 2);
+
+  setColliders(b, true);
+  b.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+  b.body.setTranslation({ x: wx, y: dropY, z: wz }, true);
+  const q = b.rot * Math.PI / 180;
+  b.body.setRotation({ x: 0, y: Math.sin(q / 2), z: 0, w: Math.cos(q / 2) }, true);
+  b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  b.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+
+  b.state = 'pressed';
+  b.cellsWorld = worldCells(b.shapeKey, b.rot, gx, gz);
+  b.snapAnim = 1.0;
+
+  for (const o of bricks) {
+    if (o === b || (o.state !== 'pressed' && o.state !== 'placed') || !o.cellsWorld) continue;
+    const dy = Math.abs(dropY - o.body.translation().y);
+    if (dy > BRICK_H * 0.4 && dy < BRICK_H * 2.2 &&
+        o.cellsWorld.some(c => b.cellsWorld.includes(c))) {
+      ufUnion(b, o);
+    }
+  }
+  playClick('snap');
+}
+
+function finishHold() {
+  if (!state.held) return;
+  const g = state.group.length ? state.group : [state.held];
+
+  if (g.length === 1 && state.snapValid) {
+    pressBrickAt(g[0], state.snapGx, state.snapGz, state.snapY);
+  } else {
+    for (const b of g) {
+      setColliders(b, true);
+      b.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+      b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      b.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      b.state = 'pool';
+      b.cellsWorld = null;
+    }
+  }
+
+  state.held = null;
+  state.group = [];
+  state.snapValid = false;
+  ghostMesh.visible = false;
+  hideDropGuide();
+  renderPanel();
+}
+
+/* ═══════ 手指（托盤翻找） ═══════ */
+const fingerR = CELL * 0.8;
+const fingerBody = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
+  .setTranslation(0, 40, 0).setGravityScale(0)
+  .setLinearDamping(7).setAngularDamping(8).lockRotations());
+world.createCollider(RAPIER.ColliderDesc.ball(fingerR).setDensity(3.2)
+  .setFriction(0.15).setRestitution(0), fingerBody);
+const fingerMesh = new THREE.Mesh(new THREE.SphereGeometry(fingerR, 16, 12),
+  new THREE.MeshBasicMaterial({ color: 0x8fe7ff, transparent: true, opacity: 0.16, depthWrite: false }));
+fingerMesh.visible = false;
+scene.add(fingerMesh);
+
+/* ═══════ 輸入（pointermove 僅記錄座標，運算全移至 animate） ═══════ */
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  pointerNDC(e);
+  const b = pickBrick();
+  if (b) {
+    startHold(b, e.shiftKey);
+    state.fingerMode = false;
+  } else {
+    const p = rayToFixedPlane(TRAY_FLOOR_TOP + fingerR * 0.9);
+    if (!p) return;
+    state.fingerMode = true;
+    state.fingerTarget.set(p.x, TRAY_FLOOR_TOP + fingerR * 0.9, p.z);
+    fingerBody.setTranslation({ x: p.x, y: TRAY_FLOOR_TOP + fingerR * 2.2, z: p.z }, true);
+    fingerBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  }
+  try { renderer.domElement.setPointerCapture(e.pointerId); } catch (err) {}
+  e.preventDefault();
+});
+
+renderer.domElement.addEventListener('pointermove', e => {
+  pointerNDC(e);
+});
+
+function endPointer() {
+  if (state.fingerMode) { state.fingerMode = false; fingerMesh.visible = false; }
+  if (state.held) finishHold();
+}
+renderer.domElement.addEventListener('pointerup', endPointer);
+renderer.domElement.addEventListener('pointercancel', endPointer);
+addEventListener('blur', endPointer);
+
+addEventListener('keydown', e => {
+  if ((e.key === 'r' || e.key === 'R') && state.held && state.group.length <= 1) {
+    const b = state.held;
+    b.rot = (b.rot + 90) % 360;
+    b.bb = bboxOf(rotCells(SHAPES[b.shapeKey].cells, b.rot));
+    const q = b.rot * Math.PI / 180;
+    b.body.setRotation({ x: 0, y: Math.sin(q / 2), z: 0, w: Math.cos(q / 2) }, true);
+    ghostMesh.rotation.y = q;
+    playClick('rot');
+  }
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    switchView();
+  }
+  if (e.key === 'F9') {
+    e.preventDefault();
+    for (let i = 0; i < PACKS.length; i++) openPack(i);
+    setTimeout(() => window.__api.autoBuild(), 60);
+  }
+});
+
+/* ═══════ 說明書 ═══════ */
+function brickCellsNow(b) {
+  const bb = bboxOf(rotCells(SHAPES[b.shapeKey].cells, b.rot));
+  const t = b.body.translation();
+  const gx = Math.round((t.x - bX0) / CELL - bb.w / 2);
+  const gz = Math.round((t.z - bZ0) / CELL - bb.d / 2);
+  if (gx < 0 || gz < 0 || gx + bb.w > BOARD.w || gz + bb.d > BOARD.d) return null;
+  if (Math.abs(t.x - (bX0 + W(gx + bb.w / 2))) > CELL * 0.4) return null;
+  if (Math.abs(t.z - (bZ0 + W(gz + bb.d / 2))) > CELL * 0.4) return null;
+  return new Set(worldCells(b.shapeKey, b.rot, gx, gz));
+}
+function planMatched() {
+  const placed = bricks.filter(b => (b.state === 'placed' || b.state === 'pressed') && b.cellsWorld);
+  const used = new Set(), ok = new Set();
+  for (const p of PLAN) {
+    for (const b of placed) {
+      if (used.has(b.id)) continue;
+      if (b.colorIdx !== p.color || b.shapeKey !== p.shape) continue;
+      const ty = b.body.translation().y;
+      const ly = BUILD_TOP_Y + BRICK_H * (p.layer + 0.5);
+      if (Math.abs(ty - ly) > BRICK_H * 0.55) continue;
+      const cs = brickCellsNow(b);
+      if (!cs || cs.size !== p.cellSet.size) continue;
+      if ([...cs].every(c => p.cellSet.has(c))) { used.add(b.id); ok.add(p); break; }
+    }
+  }
+  return ok;
+}
+
+function layerDiagram(L) {
+  const owner = Array.from({ length: BOARD.d }, () => Array(BOARD.w).fill(-1));
+  const color = Array.from({ length: BOARD.d }, () => Array(BOARD.w).fill(null));
+  const prev = Array.from({ length: BOARD.d }, () => Array(BOARD.w).fill(false));
+
+  PLAN.forEach((p, i) => {
+    if (p.layer < L) {
+      for (const c of p.cells) {
+        const [x, z] = c.split(',').map(Number);
+        if (prev[z] && prev[z][x] !== undefined) prev[z][x] = true;
+      }
+    } else if (p.layer === L) {
+      for (const c of p.cells) {
+        const [x, z] = c.split(',').map(Number);
+        if (owner[z] && owner[z][x] !== undefined) { owner[z][x] = i; color[z][x] = p.color; }
+      }
+    }
+  });
+
+  let html = '';
+  const EDGE = '#0b0e12';
+  for (let z = 0; z < BOARD.d; z++) for (let x = 0; x < BOARD.w; x++) {
+    const i = owner[z][x];
+    const on = i >= 0;
+    const isPrev = !on && prev[z][x];
+    let style = '';
+    if (on) {
+      const hex = PALETTE[color[z][x]].hex.toString(16).padStart(6, '0');
+      style += `background:#${hex};background-image:linear-gradient(180deg,rgba(255,255,255,.32),rgba(0,0,0,.20));`;
+      const same = (dx, dz) => {
+        const nx = x + dx, nz = z + dz;
+        return nz >= 0 && nz < BOARD.d && nx >= 0 && nx < BOARD.w && owner[nz][nx] === i;
+      };
+      if (!same(0, -1)) style += `border-top:2px solid ${EDGE};`;
+      if (!same(0, 1)) style += `border-bottom:2px solid ${EDGE};`;
+      if (!same(-1, 0)) style += `border-left:2px solid ${EDGE};`;
+      if (!same(1, 0)) style += `border-right:2px solid ${EDGE};`;
+    } else if (isPrev) {
+      style += 'background:#3a434e;border:1px solid #262d36;';
+    } else {
+      style += 'border:1px solid rgba(255,255,255,.05);';
+    }
+    html += `<div class="cell ${on ? 'on' : (isPrev ? 'gg' : '')}" style="${style}"></div>`;
+  }
+  return html;
+}
+
+const diagramCache = new Map();
+function getLayerDiagram(L) {
+  if (!diagramCache.has(L)) diagramCache.set(L, layerDiagram(L));
+  return diagramCache.get(L);
+}
+
+let panelCache = '';
+function renderPanel() {
+  const ok = planMatched();
+  const byLayer = new Map();
+  for (const p of PLAN) {
+    if (!byLayer.has(p.layer)) byLayer.set(p.layer, []);
+    byLayer.get(p.layer).push(p);
+  }
+  const layers = [...byLayer.keys()].sort((a, b) => a - b);
+  let html = '', firstUndone = true;
+
+  for (const L of layers) {
+    const items = byLayer.get(L);
+    const done = items.filter(p => ok.has(p)).length;
+    const allDone = done === items.length;
+    const isCur = !allDone && firstUndone;
+    if (!allDone) firstUndone = false;
+    const tally = {};
+    for (const p of items) tally[p.shape] = (tally[p.shape] || 0) + 1;
+    let chips = '';
+    for (const [shape, n] of Object.entries(tally)) {
+      const cells = SHAPES[shape].cells.length;
+      chips += `<span class="pchip"><span class="pbar">${'<i></i>'.repeat(cells)}</span>×${n}</span>`;
+    }
+    html += `<div class="layer ${allDone ? 'done' : ''} ${isCur ? 'cur' : ''}" data-layer="${L}">
+      <div class="stepno">${L + 1}</div>
+      <div class="stepmain">
+        <div class="head"><span>第 ${L + 1} 層</span><span class="cnt">${done}/${items.length}</span></div>
+        <div class="parts">${chips}</div>
+        <div class="grid" style="grid-template-columns:repeat(${BOARD.w},1fr)">${getLayerDiagram(L)}</div>
+      </div>
+    </div>`;
+  }
+
+  const allDone = ok.size === PLAN.length;
+  const sig = html + allDone;
+  if (sig !== panelCache) {
+    panelCache = sig;
+    document.getElementById('layers').innerHTML = html;
+    document.querySelectorAll('.layer').forEach(el => {
+      el.onclick = () => zoomLayer(+el.dataset.layer);
+    });
+  }
+  state._ok = ok;
+  document.getElementById('done').style.display = allDone ? 'block' : 'none';
+  if (allDone) {
+    document.getElementById('doneSub').textContent = `${PLAN.length} 顆全部就位`;
+  }
+}
+
+function zoomLayer(L) {
+  const g = document.getElementById('zoomGrid');
+  g.style.gridTemplateColumns = `repeat(${BOARD.w},1fr)`;
+  g.innerHTML = getLayerDiagram(L);
+  const items = PLAN.filter(p => p.layer === L);
+  const tally = {};
+  for (const p of items) {
+    const k = SHAPES[p.shape].label;
+    tally[k] = (tally[k] || 0) + 1;
+  }
+  document.getElementById('zoomTitle').textContent =
+    `第 ${L + 1} 層 · ` + Object.entries(tally).map(([k, n]) => `${k}×${n}`).join('　');
+  document.getElementById('zoom').style.display = 'flex';
+}
+document.getElementById('zoom').onclick = () => { document.getElementById('zoom').style.display = 'none'; };
+
+/* ═══════ 主迴圈 ═══════ */
+const clock = new THREE.Clock();
+let fpsAcc = 0, fpsFrames = 0, fps = 0;
+const statEl = document.getElementById('stat');
+
+function updateInteraction(dt) {
+  if (!state.pointerReady) return;
+
+  // 1. 懸停高亮
+  if (!state.held && !state.fingerMode) {
+    const hb = pickBrick();
+    let want = [], color = 0x2f5e8c;
+    if (hb) {
+      if (hb.state === 'pressed') { want = groupOf(hb); color = 0x2f5e8c; }
+      else { want = [hb]; color = 0x1d4a5e; }
+    }
+    const hk = want.map(b => b.id).join(',') + ':' + color;
+    if (hk !== state.hoverKey) {
+      state.hoverKey = hk;
+      for (const b of state.hovering) b.mat.emissive.setHex(0x000000);
+      for (const b of want) b.mat.emissive.setHex(color);
+      state.hovering = want;
+    }
+  }
+
+  // 2. 手指翻找
+  if (state.fingerMode) {
+    const p = rayToFixedPlane(TRAY_FLOOR_TOP + fingerR * 0.9);
+    if (p) state.fingerTarget.set(p.x, TRAY_FLOOR_TOP + fingerR * 0.9, p.z);
+    const cur = fingerBody.translation();
+    const k = 12, maxV = CELL * 26;
+    let vx = (state.fingerTarget.x - cur.x) * k;
+    let vy = (state.fingerTarget.y - cur.y) * k;
+    let vz = (state.fingerTarget.z - cur.z) * k;
+    const len = Math.hypot(vx, vy, vz);
+    if (len > maxV) { const s = maxV / len; vx *= s; vy *= s; vz *= s; }
+    fingerBody.setLinvel({ x: vx, y: vy, z: vz }, true);
+    fingerMesh.position.set(cur.x, cur.y, cur.z);
+    fingerMesh.visible = true;
+  } else {
+    fingerBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    fingerBody.setTranslation({ x: 0, y: 40, z: 0 }, true);
+  }
+
+  // 3. 固定平面射線＋平滑拖曳＋即時磁吸
+  if (state.held) {
+    const lead = state.held;
+    const g = state.group.length ? state.group : [lead];
+    const p = rayToFixedPlane(BUILD_TOP_Y + BRICK_H * 0.5);
+    if (!p) return;
+
+    const inBuild = p.x > bX0 - CELL * 1.2 && p.x < bX0 + W(BOARD.w) + CELL * 1.2 &&
+                    p.z > bZ0 - CELL * 1.2 && p.z < bZ0 + W(BOARD.d) + CELL * 1.2;
+
+    if (inBuild && g.length === 1) {
+      const bb = bboxOf(rotCells(SHAPES[lead.shapeKey].cells, lead.rot));
+      const gx = Math.round((p.x - bX0) / CELL - bb.w / 2);
+      const gz = Math.round((p.z - bZ0) / CELL - bb.d / 2);
+      const cgx = Math.min(BOARD.w - bb.w, Math.max(0, gx));
+      const cgz = Math.min(BOARD.d - bb.d, Math.max(0, gz));
+      const wx = bX0 + W(cgx + bb.w / 2);
+      const wz = bZ0 + W(cgz + bb.d / 2);
+      const dropY = supportTopY(lead, cgx, cgz);
+      const holdY = dropY + BRICK_H * 1.25;
+
+      state.snapValid = true;
+      state.snapGx = cgx;
+      state.snapGz = cgz;
+      state.snapY = dropY;
+      state.targetPos.set(wx, holdY, wz);
+
+      const snapKey = `${cgx},${cgz},${lead.rot}`;
+      if (snapKey !== state.lastSnapKey) {
+        state.lastSnapKey = snapKey;
+      }
+
+      ghostMesh.position.set(wx, dropY, wz);
+      ghostMesh.rotation.y = lead.rot * Math.PI / 180;
+      ghostMesh.visible = true;
+      showDropGuide(wx, state.visualPos.y - BRICK_H * 0.5, dropY - BRICK_H * 0.5, wz);
+    } else {
+      state.snapValid = false;
+      ghostMesh.visible = false;
+      const surf = surfaceYAt(p.x, p.z);
+      const holdY = Math.max(surf + BRICK_H * 1.6, TRAY_FLOOR_TOP + BRICK_H * 2.2);
+      state.targetPos.set(p.x, holdY, p.z);
+      showDropGuide(state.visualPos.x, state.visualPos.y - BRICK_H * 0.5, surf, state.visualPos.z);
+    }
+
+    const alpha = 1 - Math.exp(-22 * dt);
+    state.visualPos.lerp(state.targetPos, alpha);
+
+    for (const b of g) {
+      const off = b._off || { x: 0, y: 0, z: 0 };
+      b.body.setNextKinematicTranslation({
+        x: state.visualPos.x + off.x,
+        y: state.visualPos.y + off.y,
+        z: state.visualPos.z + off.z
+      });
+    }
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (camTween) {
+    camTween.k = Math.min(1, camTween.k + dt * 2.6);
+    const e = 1 - Math.pow(1 - camTween.k, 3);
+    camera.position.lerpVectors(camTween.p0, camTween.p1, e);
+    controls.target.lerpVectors(camTween.t0, camTween.t1, e);
+    if (camTween.k >= 1) camTween = null;
+  }
+
+  updateInteraction(dt);
+
+  let acc = (animate._acc || 0) + dt;
+  let steps = 0;
+  while (acc >= world.timestep && steps < 4) { world.step(); acc -= world.timestep; steps++; }
+  animate._acc = acc;
+
+  for (const b of bricks) {
+    const t = b.body.translation(), r = b.body.rotation();
+    let yOff = 0;
+    if (b.snapAnim > 0) {
+      b.snapAnim = Math.max(0, b.snapAnim - dt * 8.5);
+      // 120ms 下壓微彈手感
+      yOff = Math.sin(b.snapAnim * Math.PI) * (BRICK_H * 0.14);
+    }
+    b.mesh.position.set(t.x, t.y + yOff, t.z);
+    b.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    if (t.y < -6) {
+      b.body.setTranslation({ x: trayCx, y: TRAY_FLOOR_TOP + BRICK_H * 8, z: trayCz }, true);
+      b.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+
+  fpsAcc += dt; fpsFrames++;
+  if (fpsAcc >= 0.5) {
+    fps = Math.round(fpsFrames / fpsAcc); fpsAcc = 0; fpsFrames = 0;
+    const ok = state._ok ? state._ok.size : 0;
+    statEl.textContent = `${bricks.length} 顆 · ${ok}/${PLAN.length} 完成 · ${viewKey === 'build' ? '組裝視角' : '全景'} · ${fps} fps`;
+  }
+}
+
+function handleResize() {
+  const w = window.innerWidth || 1024;
+  const h = window.innerHeight || 768;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+addEventListener('resize', handleResize);
+
+buildPackBar();
+document.querySelector('#pickBunny .badge').textContent =
+  `${PLAN.length} 顆 · ${new Set(PLAN.map(p => p.layer)).size} 層`;
+renderPanel();
+animate();
+
+document.getElementById('btnView').onclick = () => switchView();
+document.getElementById('pickBunny').onclick = () => {
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('hud').style.display = 'block';
+  document.getElementById('panel').style.display = 'block';
+  document.getElementById('packs').style.display = 'flex';
+  document.getElementById('viewBtn').style.display = 'flex';
+  openPack(0);
+  renderPanel();
+};
+
+window.__api = {
+  autoBuild() {
+    let n = 0;
+    for (const p of PLAN) {
+      const b = bricks.find(x => x.state === 'pool' && x.colorIdx === p.color && x.shapeKey === p.shape);
+      if (!b) continue;
+      b.rot = p.rot;
+      pressBrickAt(b, p.gx, p.gz, BUILD_TOP_Y + BRICK_H * (p.layer + 0.5));
+      n++;
+    }
+    renderPanel();
+    return { built: n };
+  }
+};
+
+document.getElementById('loading').classList.add('done');
+window.__ready = true;
+</script>
+</body>
+</html>

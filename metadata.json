@@ -1,0 +1,6 @@
+{
+  "name": "積木工坊 — Brick Workshop",
+  "description": "3D 物理積木拼砌工坊：翻找零件、旋轉對位、即時磁吸與壓緊手感，支援多模型圖紙、步驟制 3D 等角說明書、多托盤切換與本機自動存檔。",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
