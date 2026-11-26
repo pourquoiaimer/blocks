@@ -218,6 +218,11 @@ export class BrickWorkshopEngine {
   private snapGz = 0;
   private snapY = BUILD_TOP_Y;
   private singlePluckMode = false;
+  private interactionMode: 'grab' | 'rummage' = 'grab';
+  private lastRattleMs = 0;
+  private fingerPrevPos = new THREE.Vector3();
+  private finderHighlightTimer: number | null = null;
+  private finderHighlighted = new Set<BrickInstance>();
 
   private activePointers = new Map<number, { x: number; y: number }>();
   private downScreen = { x: 0, y: 0 };
@@ -281,7 +286,7 @@ export class BrickWorkshopEngine {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 0.88;
     this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 1.35));
     this.renderer.setSize(w, h);
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
@@ -299,12 +304,13 @@ export class BrickWorkshopEngine {
     this.container.appendChild(canvas);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1a1512);
-    this.scene.fog = new THREE.Fog(0x1a1512, 34, 68);
+    this.scene.background = new THREE.Color(0x14100d);
+    this.scene.fog = new THREE.Fog(0x14100d, 38, 78);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.pmremEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     this.scene.environment = this.pmremEnv;
+    this.scene.environmentIntensity = 0.32;
     pmrem.dispose();
 
     this.initMaterialLibrary();
@@ -391,19 +397,19 @@ export class BrickWorkshopEngine {
       new THREE.MeshStandardMaterial({
         color: hex,
         roughness,
-        metalness: 0.04,
-        envMapIntensity: this.isSoftwareGl ? 0.35 : 0.72,
+        metalness: 0.03,
+        envMapIntensity: this.isSoftwareGl ? 0.25 : 0.38,
         emissive,
       });
 
     this.palette.forEach((def, idx) => {
       const hex = def.hex ?? 0xeceff2;
       const isDark = hex < 0x353535;
-      const roughness = isDark ? 0.42 : 0.28;
+      const roughness = isDark ? 0.48 : 0.36;
       this.baseMaterials.set(idx, makeMat(hex, roughness, 0x000000));
-      this.placedMaterials.set(idx, makeMat(hex, roughness, 0x1f3644));
-      this.hoverPoolMaterials.set(idx, makeMat(hex, roughness, 0x1d4a5e));
-      this.hoverPressedMaterials.set(idx, makeMat(hex, roughness, 0x2f5e8c));
+      this.placedMaterials.set(idx, makeMat(hex, roughness, 0x0c141a));
+      this.hoverPoolMaterials.set(idx, makeMat(hex, roughness, 0x163848));
+      this.hoverPressedMaterials.set(idx, makeMat(hex, roughness, 0x1e4366));
     });
   }
 
@@ -411,7 +417,7 @@ export class BrickWorkshopEngine {
     if (hoverMode === 'pressed') {
       return this.hoverPressedMaterials.get(b.colorIdx) ?? this.baseMaterials.get(0)!;
     }
-    if (hoverMode === 'pool') {
+    if (hoverMode === 'pool' || this.finderHighlighted.has(b)) {
       return this.hoverPoolMaterials.get(b.colorIdx) ?? this.baseMaterials.get(0)!;
     }
     if (b.state === 'placed') {
@@ -421,31 +427,31 @@ export class BrickWorkshopEngine {
   }
 
   private setupLighting(): void {
-    this.scene.add(new THREE.HemisphereLight(0xe6eeff, 0x2c241c, 1.25));
-    const key = new THREE.DirectionalLight(0xfff1dc, 2.25);
-    key.position.set(this.padCx + 3, 16, this.padCz + 8);
+    this.scene.add(new THREE.HemisphereLight(0xdbe8ff, 0x1e1610, 0.48));
+    const key = new THREE.DirectionalLight(0xfff4e4, 1.48);
+    key.position.set(this.padCx + 8, 18, this.padCz + 10);
     key.target.position.set(this.padCx - 2, 0, this.padCz);
     this.scene.add(key.target);
 
     key.castShadow = !this.isSoftwareGl;
     key.shadow.mapSize.set(1024, 1024);
     key.shadow.camera.near = 1;
-    key.shadow.camera.far = 44;
-    key.shadow.camera.left = -15;
-    key.shadow.camera.right = 15;
-    key.shadow.camera.top = 13;
-    key.shadow.camera.bottom = -13;
-    key.shadow.bias = -0.0006;
-    key.shadow.normalBias = 0.02;
+    key.shadow.camera.far = 48;
+    key.shadow.camera.left = -18;
+    key.shadow.camera.right = 18;
+    key.shadow.camera.top = 15;
+    key.shadow.camera.bottom = -15;
+    key.shadow.bias = -0.0004;
+    key.shadow.normalBias = 0.018;
     this.scene.add(key);
 
-    const fill = new THREE.DirectionalLight(0xa8c8ff, 0.48);
-    fill.position.set(this.padCx - 14, 8, this.padCz - 9);
-    this.scene.add(fill);
+    const rim = new THREE.DirectionalLight(0x98bfff, 0.34);
+    rim.position.set(this.padCx - 14, 9, this.padCz - 10);
+    this.scene.add(rim);
   }
 
   private setupPhysicsAndEnvironment(): void {
-    this.world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+    this.world = new RAPIER.World({ x: 0, y: -28.0, z: 0 });
     this.world.timestep = 1 / 60;
     try {
       this.world.integrationParameters.numSolverIterations = 3;
@@ -471,13 +477,13 @@ export class BrickWorkshopEngine {
     this.subPadCx = this.subX0 + W(this.boardW) / 2;
     this.subPadCz = this.subZ0 + W(this.boardD) / 2;
 
-    const deskW = trayCount > 1 ? 60 : 50;
-    const deskD = 34;
-    const deskCenterX = trayCount > 1 ? 1.5 : 4.5;
-    const deskCenterZ = -2.5;
+    const deskW = trayCount > 1 ? 66 : 54;
+    const deskD = 38;
+    const deskCenterX = trayCount > 1 ? 0.5 : 4.0;
+    const deskCenterZ = -2.8;
     const deskMat = new THREE.MeshStandardMaterial({
-      color: 0x4a3728,
-      roughness: 0.88,
+      color: 0x34261c,
+      roughness: 0.9,
       metalness: 0.02,
     });
     const desk = new THREE.Mesh(new THREE.BoxGeometry(deskW, 0.6, deskD), deskMat);
@@ -495,7 +501,7 @@ export class BrickWorkshopEngine {
       this.scene.add(
         new THREE.Line(
           g,
-          new THREE.LineBasicMaterial({ color: 0x5b452f, transparent: true, opacity: 0.3 })
+          new THREE.LineBasicMaterial({ color: 0x473526, transparent: true, opacity: 0.28 })
         )
       );
     }
@@ -513,7 +519,7 @@ export class BrickWorkshopEngine {
     const padD = W(this.boardD) + CELL * 1.2;
     const pad = new THREE.Mesh(
       new THREE.BoxGeometry(padW, 0.08, padD),
-      new THREE.MeshStandardMaterial({ color: 0x2f3a44, roughness: 0.94, metalness: 0.02 })
+      new THREE.MeshStandardMaterial({ color: 0x222933, roughness: 0.94, metalness: 0.02 })
     );
     pad.position.set(this.padCx, BUILD_TOP_Y - 0.04, this.padCz);
     pad.receiveShadow = true;
@@ -604,14 +610,14 @@ export class BrickWorkshopEngine {
     );
     this.subPadCollider.setEnabled(false);
 
-    // 托盤貼近組裝區左側，方便手機單手拖曳
+    // 寬敞分裝零件籃（貼近組裝區左側，有足夠翻找空間）
     const trayCoords = [
-      { x0: -8.8, z0: -4.6, w: 14, d: 17 },
-      { x0: -17.8, z0: -4.6, w: 14, d: 17 },
-      { x0: -8.8, z0: -15.4, w: 14, d: 17 },
+      { x0: -9.8, z0: -5.2, w: 16, d: 19 },
+      { x0: -19.8, z0: -5.2, w: 16, d: 19 },
+      { x0: -9.8, z0: -16.8, w: 16, d: 19 },
     ];
-    const trayMat = new THREE.MeshStandardMaterial({ color: 0x3d4a5a, roughness: 0.72, metalness: 0.1 });
-    const wallH = CELL * 2.2;
+    const trayMat = new THREE.MeshStandardMaterial({ color: 0x27303c, roughness: 0.76, metalness: 0.08 });
+    const wallH = CELL * 2.3;
     const wt = CELL * 0.42;
 
     this.trays = [];
@@ -632,7 +638,7 @@ export class BrickWorkshopEngine {
         RAPIER.RigidBodyDesc.fixed().setTranslation(cx, TRAY_FLOOR_TOP - 0.08, cz)
       );
       this.world.createCollider(
-        RAPIER.ColliderDesc.cuboid(tw / 2, 0.08, td / 2).setFriction(0.85).setRestitution(0.02),
+        RAPIER.ColliderDesc.cuboid(tw / 2, 0.08, td / 2).setFriction(0.85).setRestitution(0.08),
         floorBody
       );
 
@@ -647,7 +653,7 @@ export class BrickWorkshopEngine {
           RAPIER.RigidBodyDesc.fixed().setTranslation(wall.x, wallH / 2 + TRAY_FLOOR_TOP, wall.z)
         );
         this.world.createCollider(
-          RAPIER.ColliderDesc.cuboid(wall.hx, wallH / 2, wall.hz).setFriction(0.4).setRestitution(0),
+          RAPIER.ColliderDesc.cuboid(wall.hx, wallH / 2, wall.hz).setFriction(0.35).setRestitution(0.05),
           b
         );
         const m = new THREE.Mesh(new THREE.BoxGeometry(wall.hx * 2, wallH, wall.hz * 2), trayMat);
@@ -684,28 +690,41 @@ export class BrickWorkshopEngine {
       });
     }
 
-    // 手指翻找球體
+    // 手指翻找工具（實體碰撞球＋可視化外圈探頭）
     this.fingerBody = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(0, 40, 0)
         .setGravityScale(0)
-        .setLinearDamping(7)
+        .setLinearDamping(5)
         .setAngularDamping(8)
         .lockRotations()
     );
     this.world.createCollider(
-      RAPIER.ColliderDesc.ball(FINGER_R).setDensity(3.2).setFriction(0.15).setRestitution(0),
+      RAPIER.ColliderDesc.ball(FINGER_R * 1.15).setDensity(4.5).setFriction(0.12).setRestitution(0.05),
       this.fingerBody
     );
     this.fingerMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(FINGER_R, 14, 10),
+      new THREE.SphereGeometry(FINGER_R * 0.95, 16, 12),
       new THREE.MeshBasicMaterial({
-        color: 0x8fe7ff,
+        color: 0xf4c430,
         transparent: true,
-        opacity: 0.18,
+        opacity: 0.34,
         depthWrite: false,
       })
     );
+    const probeRing = new THREE.Mesh(
+      new THREE.RingGeometry(FINGER_R * 1.15, FINGER_R * 1.45, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0xf4c430,
+        transparent: true,
+        opacity: 0.72,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    );
+    probeRing.rotation.x = -Math.PI / 2;
+    probeRing.position.y = -FINGER_R * 0.55;
+    this.fingerMesh.add(probeRing);
     this.fingerMesh.visible = false;
     this.scene.add(this.fingerMesh);
   }
@@ -1024,28 +1043,28 @@ export class BrickWorkshopEngine {
 
     if (key === 'build') {
       return {
-        tgt: new THREE.Vector3(this.padCx, 1.15, this.padCz),
+        tgt: new THREE.Vector3(this.padCx - 0.5, 1.0, this.padCz),
         pos: new THREE.Vector3(
-          this.padCx - 2.3 * mobileScale,
-          11.4 * mobileScale,
-          this.padCz + 12.0 * mobileScale
+          this.padCx - 3.0 * mobileScale,
+          14.6 * mobileScale,
+          this.padCz + 15.6 * mobileScale
         ),
       };
     }
     if (key === 'subpad') {
       return {
-        tgt: new THREE.Vector3(this.subPadCx, 1.15, this.subPadCz),
+        tgt: new THREE.Vector3(this.subPadCx, 1.0, this.subPadCz),
         pos: new THREE.Vector3(
-          this.subPadCx - 1.5 * mobileScale,
-          11.4 * mobileScale,
-          this.subPadCz + 12.0 * mobileScale
+          this.subPadCx - 1.8 * mobileScale,
+          14.6 * mobileScale,
+          this.subPadCz + 15.6 * mobileScale
         ),
       };
     }
     if (key === 'tray' && tray) {
       return {
-        tgt: new THREE.Vector3(tray.cx + 0.8, 0.6, tray.cz),
-        pos: new THREE.Vector3(tray.cx + 2.0, 10.6 * mobileScale, tray.cz + 10.2 * mobileScale),
+        tgt: new THREE.Vector3(tray.cx + 0.6, 0.5, tray.cz),
+        pos: new THREE.Vector3(tray.cx + 2.2, 13.8 * mobileScale, tray.cz + 13.4 * mobileScale),
       };
     }
 
@@ -1056,8 +1075,8 @@ export class BrickWorkshopEngine {
       tgt: new THREE.Vector3(midX, 0.7, (this.padCz + (tray?.cz ?? 0)) * 0.45),
       pos: new THREE.Vector3(
         midX,
-        (this.trays.length > 1 || this.subAssemblyEnabled ? 22.0 : 18.0) * mobileScale,
-        (this.subAssemblyEnabled ? 22.5 : 20.0) * mobileScale
+        (this.trays.length > 1 || this.subAssemblyEnabled ? 25.0 : 21.0) * mobileScale,
+        (this.subAssemblyEnabled ? 25.5 : 23.0) * mobileScale
       ),
     };
   }
@@ -1151,8 +1170,8 @@ export class BrickWorkshopEngine {
           z: 0,
           w: Math.cos((rot * Math.PI) / 360),
         })
-        .setLinearDamping(0.28)
-        .setAngularDamping(0.72)
+        .setLinearDamping(0.06)
+        .setAngularDamping(0.35)
         .setCcdEnabled(enableCcd)
     );
     const colliders: RAPIER.Collider[] = [];
@@ -1161,9 +1180,9 @@ export class BrickWorkshopEngine {
         this.world.createCollider(
           RAPIER.ColliderDesc.cuboid((CELL / 2) * 0.97, BRICK_H / 2, (CELL / 2) * 0.97)
             .setTranslation(W(x + 0.5) - W(cx), 0, W(z + 0.5) - W(cz))
-            .setDensity(0.6)
-            .setFriction(0.9)
-            .setRestitution(0.02),
+            .setDensity(0.85)
+            .setFriction(0.65)
+            .setRestitution(0.14),
           body
         )
       );
@@ -1323,22 +1342,22 @@ export class BrickWorkshopEngine {
       pour.pouchGroup.position.z * 0.5 +
       tray.cz * 0.5 +
       Math.sin(angle) * (tray.depthWorld - margin * 2) * radius;
-    const y = TRAY_FLOOR_TOP + 3.1 + (item.slotIdx % 4) * 0.38;
+    const y = TRAY_FLOOR_TOP + 3.4 + (item.slotIdx % 4) * 0.28;
     const rot = [0, 90, 180, 270][Math.floor(Math.random() * 4)];
     const b = this.createBrick(item.shape, item.color, { x, y, z }, rot, tray.index, false);
     b.body.setLinvel(
       {
-        x: (Math.random() - 0.5) * 2.4,
-        y: -2.2 - Math.random() * 1.4,
-        z: (Math.random() - 0.5) * 2.4,
+        x: (Math.random() - 0.5) * 3.4,
+        y: -7.5 - Math.random() * 3.0,
+        z: (Math.random() - 0.5) * 3.4,
       },
       true
     );
     b.body.setAngvel(
       {
-        x: (Math.random() - 0.5) * 4,
-        y: (Math.random() - 0.5) * 5,
-        z: (Math.random() - 0.5) * 4,
+        x: (Math.random() - 0.5) * 7,
+        y: (Math.random() - 0.5) * 8,
+        z: (Math.random() - 0.5) * 7,
       },
       true
     );
@@ -1349,26 +1368,26 @@ export class BrickWorkshopEngine {
     if (!pour) return;
     pour.elapsed += dt;
 
-    // 階段 1 (0 ~ 0.22s): 撕開封口條
-    if (pour.elapsed < 0.22) {
-      const k = pour.elapsed / 0.22;
+    // 階段 1 (0 ~ 0.16s): 俐落撕開封口條
+    if (pour.elapsed < 0.16) {
+      const k = pour.elapsed / 0.16;
       pour.tearStrip.position.x = k * 1.3;
       pour.tearStrip.position.y = 1.08 + k * 0.45;
       pour.tearStrip.rotation.z = -k * 0.55;
       return;
     }
 
-    // 階段 2 (0.22 ~ 1.05s): 袋身倒轉並沿托盤擺動傾倒積木
+    // 階段 2: 袋身倒轉並快速晃動傾倒積木
     pour.tearStrip.visible = false;
-    const pourTime = pour.elapsed - 0.22;
-    const tilt = Math.min(1, pourTime / 0.22);
+    const pourTime = pour.elapsed - 0.16;
+    const tilt = Math.min(1, pourTime / 0.16);
     pour.pouchGroup.rotation.z = tilt * Math.PI * 0.88;
-    pour.pouchGroup.position.x = pour.tray.cx + Math.sin(pourTime * 7.5) * 1.35;
-    pour.pouchGroup.position.z = pour.tray.cz + Math.cos(pourTime * 5.2) * 1.25;
+    pour.pouchGroup.position.x = pour.tray.cx + Math.sin(pourTime * 9.5) * 1.45;
+    pour.pouchGroup.position.z = pour.tray.cz + Math.cos(pourTime * 6.8) * 1.35;
 
+    const interval = 0.018;
     if (pour.spawnedCount < pour.items.length) {
       pour.spawnAccum += dt;
-      const interval = 0.03;
       while (pour.spawnAccum >= interval && pour.spawnedCount < pour.items.length) {
         pour.spawnAccum -= interval;
         this.spawnPourBrick(pour, pour.items[pour.spawnedCount]);
@@ -1379,8 +1398,8 @@ export class BrickWorkshopEngine {
     }
 
     // 階段 3: 倒完後上提消失
-    const endK = Math.min(1, (pourTime - pour.items.length * 0.024) / 0.3);
-    pour.pouchGroup.position.y += dt * 4.5;
+    const endK = Math.min(1, (pourTime - pour.items.length * interval) / 0.25);
+    pour.pouchGroup.position.y += dt * 5.2;
     (pour.bagBody.material as THREE.MeshStandardMaterial).opacity = Math.max(0, 0.68 * (1 - endK));
     if (endK >= 1) {
       this.scene.remove(pour.pouchGroup);
@@ -1392,7 +1411,7 @@ export class BrickWorkshopEngine {
   }
 
   /**
-   * 撥開／搖勻目前托盤裡的積木，讓壓在底下的零件翻出來
+   * 撥開／搖晃目前籃子裡的積木，讓壓在底下的零件翻出來
    */
   public stirTray(): void {
     const tray = this.trays[this.activeTray] ?? this.trays[0];
@@ -1411,17 +1430,17 @@ export class BrickWorkshopEngine {
         const dz = tray.cz - t.z;
         b.body.setLinvel(
           {
-            x: dx * 0.6 + (Math.random() - 0.5) * 3.5,
-            y: 1.8 + Math.random() * 1.6,
-            z: dz * 0.6 + (Math.random() - 0.5) * 3.5,
+            x: dx * 0.9 + (Math.random() - 0.5) * 5.8,
+            y: 3.6 + Math.random() * 2.6,
+            z: dz * 0.9 + (Math.random() - 0.5) * 5.8,
           },
           true
         );
         b.body.setAngvel(
           {
-            x: (Math.random() - 0.5) * 4,
-            y: (Math.random() - 0.5) * 6,
-            z: (Math.random() - 0.5) * 4,
+            x: (Math.random() - 0.5) * 7,
+            y: (Math.random() - 0.5) * 9,
+            z: (Math.random() - 0.5) * 7,
           },
           true
         );
@@ -1429,8 +1448,66 @@ export class BrickWorkshopEngine {
       }
     }
     if (stirred > 0) {
+      playClick('rattle');
       playClick('shake');
     }
+  }
+
+  public setInteractionMode(mode: 'grab' | 'rummage'): void {
+    if (this.interactionMode === mode) return;
+    if (mode === 'rummage' && this.held) {
+      this.finishHold();
+    }
+    this.interactionMode = mode;
+    this.emitSnapshot();
+  }
+
+  public highlightCurrentStepParts(): number {
+    if (this.isSandbox || this.currentGuideBricks.length === 0) return 0;
+    if (this.finderHighlightTimer !== null) {
+      window.clearTimeout(this.finderHighlightTimer);
+      this.finderHighlightTimer = null;
+    }
+    for (const b of this.finderHighlighted) {
+      b.mesh.material = this.getMaterialForBrick(b, 'none');
+    }
+    this.finderHighlighted.clear();
+
+    const matchedSet = new Set(this.lastMatchedIndices);
+    const subMatchedSet = new Set(this.lastSubMatchedIndices);
+    const needed = new Map<string, number>();
+    for (const p of this.currentGuideBricks) {
+      if (matchedSet.has(p.index) || subMatchedSet.has(p.index)) continue;
+      const key = `${p.shape}:${p.color}`;
+      needed.set(key, (needed.get(key) ?? 0) + 1);
+    }
+
+    let found = 0;
+    for (const b of this.bricks) {
+      if (b.state !== 'pool') continue;
+      const key = `${b.shapeKey}:${b.colorIdx}`;
+      const rem = needed.get(key) ?? 0;
+      if (rem > 0) {
+        needed.set(key, rem - 1);
+        this.finderHighlighted.add(b);
+        b.mesh.material = this.getMaterialForBrick(b, 'pool');
+        b.body.wakeUp();
+        b.body.setLinvel({ x: (Math.random() - 0.5) * 1.4, y: 3.4, z: (Math.random() - 0.5) * 1.4 }, true);
+        found++;
+      }
+    }
+
+    if (found > 0) {
+      playClick('pick');
+      this.finderHighlightTimer = window.setTimeout(() => {
+        for (const b of this.finderHighlighted) {
+          b.mesh.material = this.getMaterialForBrick(b, 'none');
+        }
+        this.finderHighlighted.clear();
+        this.finderHighlightTimer = null;
+      }, 2200);
+    }
+    return found;
   }
 
   public spawnSandboxBrick(shape: ShapeKey, colorIdx: number, count = 4): void {
@@ -1979,26 +2056,46 @@ export class BrickWorkshopEngine {
         return;
       }
 
-      const brick = this.pickBrick();
-      if (brick) {
-        this.downWasPlaced = brick.state === 'placed';
-        this.startHold(brick, e.shiftKey || this.singlePluckMode);
-        this.fingerMode = false;
-      } else {
+      if (this.interactionMode === 'rummage') {
         this.downWasPlaced = false;
         const hitTray = this.pickTrayFloor();
         if (hitTray !== null && hitTray !== this.activeTray && this.trays.length > 1) {
           this.downOnTrayFloor = hitTray;
         }
-        const p = this.rayToFixedPlane(TRAY_FLOOR_TOP + FINGER_R * 0.9);
+        const p = this.rayToFixedPlane(TRAY_FLOOR_TOP + FINGER_R * 0.85);
         if (p) {
           this.fingerMode = true;
-          this.fingerTarget.set(p.x, TRAY_FLOOR_TOP + FINGER_R * 0.9, p.z);
+          this.fingerTarget.set(p.x, TRAY_FLOOR_TOP + FINGER_R * 0.85, p.z);
+          this.fingerPrevPos.copy(this.fingerTarget);
           this.fingerBody.setTranslation(
-            { x: p.x, y: TRAY_FLOOR_TOP + FINGER_R * 2.2, z: p.z },
+            { x: p.x, y: TRAY_FLOOR_TOP + FINGER_R * 0.85, z: p.z },
             true
           );
           this.fingerBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        }
+      } else {
+        const brick = this.pickBrick();
+        if (brick) {
+          this.downWasPlaced = brick.state === 'placed';
+          this.startHold(brick, e.shiftKey || this.singlePluckMode);
+          this.fingerMode = false;
+        } else {
+          this.downWasPlaced = false;
+          const hitTray = this.pickTrayFloor();
+          if (hitTray !== null && hitTray !== this.activeTray && this.trays.length > 1) {
+            this.downOnTrayFloor = hitTray;
+          }
+          const p = this.rayToFixedPlane(TRAY_FLOOR_TOP + FINGER_R * 0.85);
+          if (p) {
+            this.fingerMode = true;
+            this.fingerTarget.set(p.x, TRAY_FLOOR_TOP + FINGER_R * 0.85, p.z);
+            this.fingerPrevPos.copy(this.fingerTarget);
+            this.fingerBody.setTranslation(
+              { x: p.x, y: TRAY_FLOOR_TOP + FINGER_R * 2.0, z: p.z },
+              true
+            );
+            this.fingerBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+          }
         }
       }
       try {
@@ -2051,6 +2148,10 @@ export class BrickWorkshopEngine {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if ((e.key === 'r' || e.key === 'R') && this.held && this.heldGroup.length <= 1) {
         this.rotateHeld();
+      } else if (e.key === 'f' || e.key === 'F') {
+        this.setInteractionMode(this.interactionMode === 'rummage' ? 'grab' : 'rummage');
+      } else if (e.key === 'g' || e.key === 'G') {
+        this.setInteractionMode('grab');
       } else if (e.key === 'Tab') {
         e.preventDefault();
         this.switchView();
@@ -2114,13 +2215,13 @@ export class BrickWorkshopEngine {
       }
     }
 
-    // 2. 手指翻找
+    // 2. 手指翻找（撥開積木並帶真實塑膠碰撞細響）
     if (this.fingerMode) {
-      const p = this.rayToFixedPlane(TRAY_FLOOR_TOP + FINGER_R * 0.9);
-      if (p) this.fingerTarget.set(p.x, TRAY_FLOOR_TOP + FINGER_R * 0.9, p.z);
+      const p = this.rayToFixedPlane(TRAY_FLOOR_TOP + FINGER_R * 0.85);
+      if (p) this.fingerTarget.set(p.x, TRAY_FLOOR_TOP + FINGER_R * 0.85, p.z);
       const cur = this.fingerBody.translation();
-      const k = 12;
-      const maxV = CELL * 26;
+      const k = 16;
+      const maxV = CELL * 34;
       let vx = (this.fingerTarget.x - cur.x) * k;
       let vy = (this.fingerTarget.y - cur.y) * k;
       let vz = (this.fingerTarget.z - cur.z) * k;
@@ -2134,6 +2235,26 @@ export class BrickWorkshopEngine {
       this.fingerBody.setLinvel({ x: vx, y: vy, z: vz }, true);
       this.fingerMesh.position.set(cur.x, cur.y, cur.z);
       this.fingerMesh.visible = true;
+
+      const movedDist = Math.hypot(cur.x - this.fingerPrevPos.x, cur.z - this.fingerPrevPos.z);
+      if (movedDist > 0.25) {
+        this.fingerPrevPos.set(cur.x, cur.y, cur.z);
+        const now = performance.now();
+        if (now - this.lastRattleMs > 75) {
+          // 只有周圍確實有池中零件時才發出塑膠撥動聲
+          const nearBrick = this.bricks.some(b => {
+            if (b.state !== 'pool') return false;
+            const bt = b.body.translation();
+            const dx = bt.x - cur.x;
+            const dz = bt.z - cur.z;
+            return dx * dx + dz * dz < CELL * CELL * 5.2;
+          });
+          if (nearBrick) {
+            this.lastRattleMs = now;
+            playClick('rattle');
+          }
+        }
+      }
     } else {
       this.fingerBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
       this.fingerBody.setTranslation({ x: 0, y: 40, z: 0 }, true);
@@ -2429,6 +2550,7 @@ export class BrickWorkshopEngine {
       heldActive: Boolean(this.held),
       heldCount: this.heldGroup.length,
       singlePluckMode: this.singlePluckMode,
+      interactionMode: this.interactionMode,
       poolCount,
       placedCount,
       pressedCount,
@@ -2522,6 +2644,7 @@ export class BrickWorkshopEngine {
     cancelAnimationFrame(this.frameId);
     window.clearTimeout(this.frameId);
     if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
+    if (this.finderHighlightTimer !== null) window.clearTimeout(this.finderHighlightTimer);
 
     const canvas = this.renderer?.domElement;
     if (canvas) {

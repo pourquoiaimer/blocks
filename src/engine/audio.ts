@@ -1,11 +1,36 @@
 let audioCtx: AudioContext | null = null;
 let enabled = true;
+let noiseBuffer: AudioBuffer | null = null;
 
 export function setAudioEnabled(val: boolean): void {
   enabled = val;
 }
 
-export type SoundKind = 'snap' | 'pick' | 'rot' | 'place' | 'pluck' | 'complete' | 'pour' | 'shake' | 'box';
+export type SoundKind =
+  | 'snap'
+  | 'pick'
+  | 'rot'
+  | 'place'
+  | 'pluck'
+  | 'complete'
+  | 'pour'
+  | 'shake'
+  | 'box'
+  | 'rattle';
+
+function getNoiseBuffer(ctx: AudioContext): AudioBuffer {
+  if (noiseBuffer && noiseBuffer.sampleRate === ctx.sampleRate) {
+    return noiseBuffer;
+  }
+  const len = Math.floor(ctx.sampleRate * 0.08);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) {
+    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (len * 0.35));
+  }
+  noiseBuffer = buf;
+  return buf;
+}
 
 export function playClick(type: SoundKind = 'snap'): void {
   if (!enabled) return;
@@ -40,20 +65,65 @@ export function playClick(type: SoundKind = 'snap'): void {
       return;
     }
 
-    if (type === 'pour') {
-      // 拆包傾倒時輕巧的塑膠零件落盤聲
-      const freq = 380 + Math.random() * 240;
+    if (type === 'rattle' || type === 'pour') {
+      // 清脆真實的 ABS 塑膠碰撞摩擦聲（短促帶通濾波噪聲 + 輕敲音）
+      const src = audioCtx.createBufferSource();
+      src.buffer = getNoiseBuffer(audioCtx);
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(type === 'rattle' ? 2200 + Math.random() * 1400 : 1800 + Math.random() * 900, now);
+      filter.Q.setValueAtTime(3.2, now);
+      const nGain = audioCtx.createGain();
+      nGain.gain.setValueAtTime(type === 'rattle' ? 0.065 : 0.055, now);
+      nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.042);
+      src.connect(filter);
+      filter.connect(nGain);
+      nGain.connect(audioCtx.destination);
+      src.start(now);
+      src.stop(now + 0.045);
+
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
-      osc.type = 'sine';
+      osc.type = 'triangle';
+      const freq = 620 + Math.random() * 480;
       osc.frequency.setValueAtTime(freq, now);
-      osc.frequency.exponentialRampToValueAtTime(freq * 0.55, now + 0.032);
-      gain.gain.setValueAtTime(0.045, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.52, now + 0.025);
+      gain.gain.setValueAtTime(0.032, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.028);
       osc.connect(gain);
       gain.connect(audioCtx.destination);
       osc.start(now);
-      osc.stop(now + 0.04);
+      osc.stop(now + 0.03);
+      return;
+    }
+
+    if (type === 'snap') {
+      // 雙層塑膠咬合喀嗒聲：高頻瞬間卡榫 + 中低頻壓實共鳴
+      const src = audioCtx.createBufferSource();
+      src.buffer = getNoiseBuffer(audioCtx);
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(1600, now);
+      const nGain = audioCtx.createGain();
+      nGain.gain.setValueAtTime(0.11, now);
+      nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.026);
+      src.connect(filter);
+      filter.connect(nGain);
+      nGain.connect(audioCtx.destination);
+      src.start(now);
+      src.stop(now + 0.03);
+
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(560, now);
+      osc.frequency.exponentialRampToValueAtTime(135, now + 0.052);
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.058);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.06);
       return;
     }
 
@@ -61,12 +131,7 @@ export function playClick(type: SoundKind = 'snap'): void {
     const gain = audioCtx.createGain();
     osc.type = 'triangle';
 
-    if (type === 'snap') {
-      osc.frequency.setValueAtTime(520, now);
-      osc.frequency.exponentialRampToValueAtTime(140, now + 0.055);
-      gain.gain.setValueAtTime(0.18, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
-    } else if (type === 'place') {
+    if (type === 'place') {
       osc.frequency.setValueAtTime(340, now);
       osc.frequency.exponentialRampToValueAtTime(190, now + 0.045);
       gain.gain.setValueAtTime(0.1, now);

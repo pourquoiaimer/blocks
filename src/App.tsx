@@ -5,12 +5,15 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
+  Hand,
   Maximize2,
+  MousePointer,
   Package,
   PackageOpen,
   PanelRightOpen,
   Plus,
   RotateCw,
+  Search,
   Shuffle,
   SlidersHorizontal,
   Sparkles,
@@ -418,12 +421,12 @@ export default function App() {
               <div className="rounded-xl bg-[#11151b]/88 border border-white/10 px-3 py-2 text-[11.5px] leading-relaxed text-[#c6d0dc] pointer-events-none">
                 <div>
                   <b className="text-[#7fe3ff]">左鍵拖積木</b> 對位（<b className="text-[#7fe3ff]">R</b> 轉 90°）
-                  · <b className="text-[#7fe3ff]">左鍵拖空白</b> 手翻找
+                  · 按 <b className="text-[#f4c430]">F</b> 切換手指翻找模式
                 </div>
                 <div>
                   {feel.placementMode === 'instant' ? (
                     <>
-                      <b className="text-[#7fe3ff]">放開左鍵</b> 綠框處直接卡緊；拖回盤內即放回
+                      <b className="text-[#7fe3ff]">放開左鍵</b> 綠框處直接卡緊；拖回籃內即放回
                     </>
                   ) : (
                     <>
@@ -560,15 +563,63 @@ export default function App() {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={() => engineRef.current?.stirTray()}
-              title="撥開目前籃子裡堆疊的積木"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1b222c]/95 hover:bg-[#26303d] border border-white/14 text-xs font-medium text-[#dce5f0] whitespace-nowrap transition-colors"
-            >
-              <Shuffle className="w-3.5 h-3.5 text-[#f4c430]" />
-              撥開積木
-            </button>
+            {/* 真實玩樂工具列：抓放 / 手指翻找 / 搖晃 / 找本步零件 */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex items-center p-1 rounded-xl bg-[#11151b]/95 border border-white/14">
+                <button
+                  type="button"
+                  onClick={() => engineRef.current?.setInteractionMode('grab')}
+                  title="抓取並拼放積木（快捷鍵 G）"
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                    (hud?.interactionMode ?? 'grab') === 'grab'
+                      ? 'bg-[#7fe3ff] text-[#0c141c]'
+                      : 'text-[#b4c0ce] hover:text-white'
+                  }`}
+                >
+                  <MousePointer className="w-3.5 h-3.5" />
+                  抓放積木
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    engineRef.current?.setInteractionMode(
+                      hud?.interactionMode === 'rummage' ? 'grab' : 'rummage'
+                    )
+                  }
+                  title="切換成手指撥找模式，直接在零件堆裡把壓在底下的積木撥開（快捷鍵 F）"
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                    hud?.interactionMode === 'rummage'
+                      ? 'bg-[#f4c430] text-[#1a150f] font-semibold'
+                      : 'text-[#b4c0ce] hover:text-white'
+                  }`}
+                >
+                  <Hand className="w-3.5 h-3.5" />
+                  手指翻找（F）
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => engineRef.current?.stirTray()}
+                title="搖晃目前籃子裡堆疊的積木，讓底層零件翻上來"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1b222c]/95 hover:bg-[#26303d] border border-white/14 text-xs font-medium text-[#dce5f0] whitespace-nowrap transition-colors"
+              >
+                <Shuffle className="w-3.5 h-3.5 text-[#f4c430]" />
+                搖晃籃子
+              </button>
+
+              {session.kind === 'model' && hud?.boxOpened && (
+                <button
+                  type="button"
+                  onClick={() => engineRef.current?.highlightCurrentStepParts()}
+                  title="讓目前步驟需要的積木在籃子裡跳動閃亮提示"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#1b222c]/95 hover:bg-[#26303d] border border-white/14 text-xs font-medium text-[#dce5f0] whitespace-nowrap transition-colors"
+                >
+                  <Search className="w-3.5 h-3.5 text-[#7fe3ff]" />
+                  找本步零件
+                </button>
+              )}
+            </div>
 
             {session.kind === 'model' && hud?.hasSubAssemblies && (
               <div className="flex items-center gap-1.5">

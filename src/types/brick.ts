@@ -142,6 +142,7 @@ export interface WorkshopHudSnapshot {
   heldActive: boolean;
   heldCount: number;
   singlePluckMode: boolean;
+  interactionMode: 'grab' | 'rummage';
   poolCount: number;
   placedCount: number;
   pressedCount: number;
