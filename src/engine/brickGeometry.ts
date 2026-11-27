@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { ShapeKey } from '../types/brick';
-import { BRICK_H, SHAPES, STUD_H, STUD_R, W, bboxOf, outlineLoop } from './brickPlanner';
+import { BRICK_H, CELL, SHAPES, STUD_H, STUD_R, W, bboxOf, outlineLoop } from './brickPlanner';
 
 export interface CachedBrickGeo {
   geo: THREE.BufferGeometry;
@@ -29,35 +29,64 @@ export function brickGeometry(shapeKey: ShapeKey): CachedBrickGeo {
   };
 
   const SEAM = 0.014;
-  const BEVEL = 0.015;
+  const BEVEL = 0.013;
   const bodyDepth = BRICK_H - BEVEL * 2;
+  const shapeDef = SHAPES[shapeKey];
 
-  const loop = outlineLoop(cells);
-  if (loop) {
-    const shape = new THREE.Shape();
-    loop.forEach((key, i) => {
-      const [x, z] = key.split(',').map(Number);
-      // 依外圍接縫微內縮，讓積木與積木之間保持真實縫線
-      const sx = (W(x) - W(cx)) * 0.978;
-      const sy = -(W(z) - W(cz)) * 0.978;
-      if (i === 0) shape.moveTo(sx, sy);
-      else shape.lineTo(sx, sy);
-    });
-    shape.closePath();
+  if (shapeDef.isSlope) {
+    const BEV = 0.012;
+    const hx = W(bb.w) * 0.5 - SEAM - BEV;
+    const hy = BRICK_H * 0.5 - BEV;
+    const toeY = -hy + BRICK_H * 0.21;
+    const topEndX = shapeKey === 'slope1x2' ? CELL * 0.04 : -hx + CELL * 0.20;
 
-    const body = new THREE.ExtrudeGeometry(shape, {
-      depth: bodyDepth,
+    const prof = new THREE.Shape();
+    prof.moveTo(-hx, -hy);
+    prof.lineTo(hx, -hy);
+    prof.lineTo(hx, toeY);
+    prof.lineTo(topEndX, hy);
+    prof.lineTo(-hx, hy);
+    prof.closePath();
+
+    const depthZ = Math.max(0.05, W(bb.d) - SEAM * 2 - BEV * 2);
+    const slopeBody = new THREE.ExtrudeGeometry(prof, {
+      depth: depthZ,
       bevelEnabled: true,
-      bevelThickness: BEVEL,
-      bevelSize: SEAM,
+      bevelThickness: BEV,
+      bevelSize: BEV,
       bevelSegments: 1,
     });
-    body.rotateX(-Math.PI / 2);
-    body.translate(0, -bodyDepth / 2, 0);
-    pushGeo(body);
+    slopeBody.translate(0, 0, -depthZ / 2);
+    pushGeo(slopeBody);
+  } else {
+    const loop = outlineLoop(cells);
+    if (loop) {
+      const shape = new THREE.Shape();
+      loop.forEach((key, i) => {
+        const [x, z] = key.split(',').map(Number);
+        // 依外圍接縫微內縮，讓積木與積木之間保持真實縫線
+        const sx = (W(x) - W(cx)) * 0.978;
+        const sy = -(W(z) - W(cz)) * 0.978;
+        if (i === 0) shape.moveTo(sx, sy);
+        else shape.lineTo(sx, sy);
+      });
+      shape.closePath();
+
+      const body = new THREE.ExtrudeGeometry(shape, {
+        depth: bodyDepth,
+        bevelEnabled: true,
+        bevelThickness: BEVEL,
+        bevelSize: SEAM,
+        bevelSegments: 1,
+      });
+      body.rotateX(-Math.PI / 2);
+      body.translate(0, -bodyDepth / 2, 0);
+      pushGeo(body);
+    }
   }
 
-  for (const [x, z] of cells) {
+  const studList = shapeDef.studCells ?? cells;
+  for (const [x, z] of studList) {
     const stud = new THREE.CylinderGeometry(STUD_R * 0.96, STUD_R, STUD_H, 10, 1, false);
     stud.translate(W(x + 0.5) - W(cx), BRICK_H / 2 + STUD_H / 2, W(z + 0.5) - W(cz));
     pushGeo(stud);

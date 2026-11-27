@@ -11,12 +11,17 @@ const MAX_SHOWCASE = 3;
 
 export const DEFAULT_FEEL: FeelSettings = {
   placementMode: 'instant',
+  controlStyle: 'auto',
   dragSmoothing: 22,
   holdHeightMul: 1.25,
   snapTolerance: 1.2,
   soundEnabled: true,
+  hapticsEnabled: true,
+  autoFollowBuildView: true,
   showStepGuide: false,
 };
+
+export const DEFAULT_TRAY_NAMES = ['小盤 1', '小盤 2', '小盤 3', '地獄深籃'];
 
 function defaultStore(): WorkshopSaveStore {
   return {
@@ -25,6 +30,7 @@ function defaultStore(): WorkshopSaveStore {
     showcase: [],
     sandbox: null,
     feel: { ...DEFAULT_FEEL },
+    trayNames: [...DEFAULT_TRAY_NAMES],
   };
 }
 
@@ -51,12 +57,16 @@ export function loadSaveStore(): WorkshopSaveStore {
     const raw = storage.getItem(STORAGE_KEY);
     if (!raw) return defaultStore();
     const parsed = JSON.parse(raw) as Partial<WorkshopSaveStore>;
+    const savedNames = Array.isArray(parsed.trayNames) && parsed.trayNames.length >= 4
+      ? parsed.trayNames.slice(0, 4).map((n, i) => String(n || DEFAULT_TRAY_NAMES[i]))
+      : [...DEFAULT_TRAY_NAMES];
     return {
       version: 1,
       activeBuild: parsed.activeBuild ?? null,
       showcase: Array.isArray(parsed.showcase) ? parsed.showcase.slice(0, MAX_SHOWCASE) : [],
       sandbox: parsed.sandbox ?? null,
       feel: { ...DEFAULT_FEEL, ...(parsed.feel ?? {}) },
+      trayNames: savedNames,
     };
   } catch {
     return defaultStore();
@@ -93,6 +103,13 @@ export function saveSandboxState(sandbox: SandboxSaveState | null): WorkshopSave
 export function saveFeelSettings(feel: FeelSettings): WorkshopSaveStore {
   const store = loadSaveStore();
   store.feel = { ...feel };
+  persistStore(store);
+  return store;
+}
+
+export function saveTrayNames(trayNames: string[]): WorkshopSaveStore {
+  const store = loadSaveStore();
+  store.trayNames = trayNames.slice(0, 4).map((n, i) => String(n || DEFAULT_TRAY_NAMES[i]));
   persistStore(store);
   return store;
 }

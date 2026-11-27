@@ -1,7 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Check, Copy, ImagePlus, Layers, Play, Trash2, X } from 'lucide-react';
+import { Check, Copy, ImagePlus, Layers, Play, Share2, Trash2, X } from 'lucide-react';
 import type { BrickModel, ColorDef } from '../types/brick';
 import { buildPlan, hexToRgb, rgbDistSq } from '../engine/brickPlanner';
+import { encodeModelShareCode } from '../services/modelShare';
 import { IsometricStepSvg } from './IsometricStepSvg';
 
 interface Props {
@@ -54,6 +55,7 @@ export const MaskBuilderModal: React.FC<Props> = ({ onPlayCustom, onClose }) => 
   const [activeLayer, setActiveLayer] = useState(0);
   const [brushColor, setBrushColor] = useState<number | null>(1); // null = eraser '.'
   const [copied, setCopied] = useState(false);
+  const [copiedShare, setCopiedShare] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const model: BrickModel = useMemo(
@@ -79,8 +81,17 @@ export const MaskBuilderModal: React.FC<Props> = ({ onPlayCustom, onClose }) => 
 
   const plan = useMemo(() => buildPlan(model), [model]);
   const counts = useMemo(() => {
-    const tally = { '1x1': 0, '1x2': 0, '1x4': 0 };
-    for (const p of plan) tally[p.shape]++;
+    const tally: Record<string, number> = {
+      '1x4': 0,
+      '2x2': 0,
+      '1x3': 0,
+      L3: 0,
+      '1x2': 0,
+      '1x1': 0,
+    };
+    for (const p of plan) {
+      tally[p.shape] = (tally[p.shape] ?? 0) + 1;
+    }
     return tally;
   }, [plan]);
 
@@ -172,6 +183,16 @@ export const MaskBuilderModal: React.FC<Props> = ({ onPlayCustom, onClose }) => 
       await navigator.clipboard.writeText(JSON.stringify(model, null, 2));
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // ignore clipboard errors
+    }
+  };
+
+  const copyShareCode = async () => {
+    try {
+      await navigator.clipboard.writeText(encodeModelShareCode(model));
+      setCopiedShare(true);
+      setTimeout(() => setCopiedShare(false), 1800);
     } catch {
       // ignore clipboard errors
     }
@@ -357,10 +378,16 @@ export const MaskBuilderModal: React.FC<Props> = ({ onPlayCustom, onClose }) => 
                   showAllBright
                 />
               </div>
-              <div className="mt-2.5 flex items-center justify-between text-xs text-[#95a2b3] tabular-nums">
-                <span>四格 1×4：{counts['1x4']}</span>
-                <span>兩格 1×2：{counts['1x2']}</span>
-                <span>單格 1×1：{counts['1x1']}</span>
+              <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#95a2b3] tabular-nums">
+                {counts['4x4'] ? <span>4×4：{counts['4x4']}</span> : null}
+                {counts['2x4'] ? <span>2×4：{counts['2x4']}</span> : null}
+                {counts['2x3'] ? <span>2×3：{counts['2x3']}</span> : null}
+                <span>1×4：{counts['1x4']}</span>
+                <span>2×2：{counts['2x2']}</span>
+                <span>1×3：{counts['1x3']}</span>
+                <span>L3 轉角：{counts.L3}</span>
+                <span>1×2：{counts['1x2']}</span>
+                <span>1×1：{counts['1x1']}</span>
               </div>
             </div>
 
@@ -373,6 +400,15 @@ export const MaskBuilderModal: React.FC<Props> = ({ onPlayCustom, onClose }) => 
               >
                 <Play className="w-4 h-4" />
                 立即在 3D 工坊拼砌（{plan.length} 顆）
+              </button>
+              <button
+                type="button"
+                disabled={plan.length === 0}
+                onClick={copyShareCode}
+                className="flex items-center justify-center gap-2 w-full py-2 px-4 rounded-xl bg-[#27303d] hover:bg-[#323e4f] border border-[#7fe3ff]/30 text-xs font-medium text-[#cfe8f7] disabled:opacity-40 transition-colors"
+              >
+                {copiedShare ? <Check className="w-3.5 h-3.5 text-[#6fdc9a]" /> : <Share2 className="w-3.5 h-3.5 text-[#7fe3ff]" />}
+                {copiedShare ? '已複製玩家分享碼（BW1）' : '複製玩家分享碼（可貼給朋友拼砌）'}
               </button>
               <button
                 type="button"

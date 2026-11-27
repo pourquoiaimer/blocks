@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
-import { Boxes, Play, SlidersHorizontal, Sparkles, Trash2, Wand2 } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Boxes, Download, Play, SlidersHorizontal, Sparkles, Trash2, Wand2, X } from 'lucide-react';
 import type { BrickModel, WorkshopSaveStore } from '../types/brick';
 import { MODELS, getModelById } from '../data/models';
-import { buildPlan, buildSteps } from '../engine/brickPlanner';
+import { buildPlan, buildSortedPouches, buildSteps } from '../engine/brickPlanner';
+import { decodeModelShareCode } from '../services/modelShare';
 import { IsometricStepSvg } from './IsometricStepSvg';
 
 interface Props {
@@ -34,12 +35,27 @@ export const WorkshopMenu: React.FC<Props> = ({
   onOpenFeelSettings,
   onRemoveShowcase,
 }) => {
+  const [importOpen, setImportOpen] = useState(false);
+  const [shareInput, setShareInput] = useState('');
+  const [shareError, setShareError] = useState('');
+
+  const handleImportShare = () => {
+    const decoded = decodeModelShareCode(shareInput);
+    if (!decoded) {
+      setShareError('無法解析分享碼，請確認複製完整的 BW1:... 字串或圖紙 JSON。');
+      return;
+    }
+    setShareError('');
+    setImportOpen(false);
+    setShareInput('');
+    onSelectModel(decoded);
+  };
   const modelStats = useMemo(() => {
     return MODELS.map(m => {
       const plan = buildPlan(m);
       const steps = buildSteps(plan);
-      const trays = Math.max(1, ...m.packs.map(p => p.trayIndex + 1));
-      return { model: m, plan, stepCount: steps.length, trays };
+      const pouchCount = buildSortedPouches(m).length;
+      return { model: m, plan, stepCount: steps.length, pouchCount };
     });
   }, []);
 
@@ -97,6 +113,17 @@ export const WorkshopMenu: React.FC<Props> = ({
             </button>
             <button
               type="button"
+              onClick={() => {
+                setShareError('');
+                setImportOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#222933] hover:bg-[#2c3543] border border-white/12 text-xs font-medium text-[#e3ebf5] whitespace-nowrap transition-colors"
+            >
+              <Download className="w-4 h-4 text-[#6fdc9a]" />
+              匯入分享碼
+            </button>
+            <button
+              type="button"
               onClick={onOpenFeelSettings}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#222933] hover:bg-[#2c3543] border border-white/12 text-xs font-medium text-[#e3ebf5] whitespace-nowrap transition-colors"
             >
@@ -148,7 +175,7 @@ export const WorkshopMenu: React.FC<Props> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {modelStats.map(({ model, plan, stepCount, trays }) => (
+            {modelStats.map(({ model, plan, stepCount, pouchCount }) => (
               <div
                 key={model.id}
                 onClick={() => onSelectModel(model)}
@@ -182,7 +209,7 @@ export const WorkshopMenu: React.FC<Props> = ({
                   <span>
                     {plan.length} 顆 · {model.masks.length} 層 · {stepCount} 步
                   </span>
-                  <span>{trays > 1 ? `${trays} 托盤` : `${model.packs.length} 包`}</span>
+                  <span>{pouchCount} 小袋</span>
                 </div>
               </div>
             ))}
@@ -250,6 +277,57 @@ export const WorkshopMenu: React.FC<Props> = ({
           )}
         </section>
       </div>
+
+      {/* 匯入玩家作品分享碼視窗 */}
+      {importOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          onClick={() => setImportOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-[#161a21] border border-white/14 p-5 text-[#e6edf6] shadow-2xl space-y-3"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-white">匯入玩家作品分享碼</h3>
+              <button
+                type="button"
+                onClick={() => setImportOpen(false)}
+                className="p-1.5 rounded-lg text-[#9aa6b5] hover:text-white hover:bg-white/10"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-[#8a96a6]">
+              貼上由「自由創作模式」或「遮罩工具」產生的 <code className="text-[#7fe3ff]">BW1:...</code> 分享碼，即可當成專屬積木組開箱挑戰。
+            </p>
+            <textarea
+              value={shareInput}
+              onChange={e => setShareInput(e.target.value)}
+              rows={4}
+              placeholder="在此貼上 BW1:... 分享碼"
+              className="w-full rounded-xl bg-[#0d1116] border border-white/14 p-3 text-xs text-white font-mono focus:outline-none focus:border-[#7fe3ff]"
+            />
+            {shareError && <p className="text-xs text-[#ff9c9c]">{shareError}</p>}
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setImportOpen(false)}
+                className="px-3.5 py-2 rounded-lg bg-[#222933] text-xs text-[#b4c0ce] hover:text-white"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleImportShare}
+                className="px-4 py-2 rounded-lg bg-[#6fdc9a] text-[#0c1812] text-xs font-semibold hover:bg-[#8be7af]"
+              >
+                載入並開箱拼砌
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

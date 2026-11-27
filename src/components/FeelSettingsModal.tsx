@@ -38,6 +38,40 @@ export const FeelSettingsModal: React.FC<Props> = ({ feel, onChange, onClose }) 
         </div>
 
         <div className="space-y-4 text-sm">
+          {/* 拿取與放置操作習慣（桌機／手機可自由切換） */}
+          <div>
+            <div className="text-xs font-medium text-[#a5b2c2] mb-1.5">拿取與放置方式（桌機／手機皆可切換）</div>
+            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-[#0e1116] border border-white/10">
+              {(
+                [
+                  { id: 'auto', label: '自動偵測' },
+                  { id: 'drag', label: '長按拖曳' },
+                  { id: 'tap', label: '點選拿取' },
+                ] as const
+              ).map(opt => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => update('controlStyle', opt.id)}
+                  className={`py-2 px-2 rounded-lg text-xs font-medium transition-colors ${
+                    feel.controlStyle === opt.id
+                      ? 'bg-[#7fe3ff] text-[#0c141c] font-semibold'
+                      : 'text-[#8794a4] hover:text-white'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] text-[#7c8898]">
+              {feel.controlStyle === 'tap'
+                ? '點一下拿起來浮空 → 可單手按「旋轉」，再點底板就放下。'
+                : feel.controlStyle === 'drag'
+                  ? '按住拖曳對位、放開即放下（觸控拖曳時另一指輕點可轉 90°）。'
+                  : '觸控自動用「點選拿取」，滑鼠自動用「長按拖曳」，也可隨時手動強制切換。'}
+            </p>
+          </div>
+
           {/* 放置模式切換 */}
           <div>
             <div className="text-xs font-medium text-[#a5b2c2] mb-1.5">放置與壓緊機制</div>
@@ -67,8 +101,8 @@ export const FeelSettingsModal: React.FC<Props> = ({ feel, onChange, onClose }) 
             </div>
             <p className="mt-1.5 text-[11px] text-[#7c8898]">
               {feel.placementMode === 'instant'
-                ? '拖至綠框放開左鍵直接卡緊並與上下層連帶鎖定。'
-                : '放開左鍵先輕放於顆粒上微調，再次輕點即壓緊喀嗒鎖定。'}
+                ? '放開／點擊綠框直接卡緊並與上下層連帶鎖定。'
+                : '先輕放於顆粒上微調，再次輕點即壓緊喀嗒鎖定。'}
             </p>
           </div>
 
@@ -127,7 +161,7 @@ export const FeelSettingsModal: React.FC<Props> = ({ feel, onChange, onClose }) 
             />
           </div>
 
-          {/* 音效與步驟導引線框 */}
+          {/* 音效、震動觸覺、視角接力與步驟線框 */}
           <div className="grid grid-cols-2 gap-2 pt-1">
             <label className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#10141a] border border-white/10 cursor-pointer text-xs">
               <span>塑膠喀嗒音效</span>
@@ -135,6 +169,24 @@ export const FeelSettingsModal: React.FC<Props> = ({ feel, onChange, onClose }) 
                 type="checkbox"
                 checked={feel.soundEnabled}
                 onChange={e => update('soundEnabled', e.target.checked)}
+                className="accent-[#7fe3ff]"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#10141a] border border-white/10 cursor-pointer text-xs">
+              <span>手機震動回饋</span>
+              <input
+                type="checkbox"
+                checked={feel.hapticsEnabled}
+                onChange={e => update('hapticsEnabled', e.target.checked)}
+                className="accent-[#7fe3ff]"
+              />
+            </label>
+            <label className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#10141a] border border-white/10 cursor-pointer text-xs">
+              <span>籃內取磚自動回組裝區</span>
+              <input
+                type="checkbox"
+                checked={feel.autoFollowBuildView}
+                onChange={e => update('autoFollowBuildView', e.target.checked)}
                 className="accent-[#7fe3ff]"
               />
             </label>

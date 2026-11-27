@@ -1,5 +1,16 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Layers, Lightbulb, ListOrdered, Maximize2, Palette, PanelRightClose } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Layers,
+  Lightbulb,
+  ListOrdered,
+  Maximize2,
+  Palette,
+  PanelRightClose,
+  RotateCcw,
+  RotateCw,
+} from 'lucide-react';
 import type { BrickModel, BuildStep, ManualViewMode, PlanBrick } from '../types/brick';
 import { SHAPES } from '../engine/brickPlanner';
 import { IsometricStepSvg } from './IsometricStepSvg';
@@ -18,6 +29,21 @@ interface Props {
   onCollapse: () => void;
   showStepGuide: boolean;
   onToggleStepGuide: () => void;
+  manualYawDeg: number;
+  manualPitchDeg: number;
+  onRotateManual: (yawDeg: number, pitchDeg: number) => void;
+}
+
+export function formatViewDirection(yawDeg: number): string {
+  const norm = ((yawDeg % 360) + 360) % 360;
+  if (norm < 23 || norm >= 338) return '正面';
+  if (norm < 68) return '右前';
+  if (norm < 113) return '右側';
+  if (norm < 158) return '右後';
+  if (norm < 203) return '背面';
+  if (norm < 248) return '左後';
+  if (norm < 293) return '左側';
+  return '左前';
 }
 
 function summarizeParts(bricks: PlanBrick[], palette: BrickModel['palette']) {
@@ -34,8 +60,85 @@ function summarizeParts(bricks: PlanBrick[], palette: BrickModel['palette']) {
     colorName: palette[item.color]?.name ?? '',
     colorCode: palette[item.color]?.code ?? String(item.color + 1),
     transparent: Boolean(palette[item.color]?.transparent),
+    finish: palette[item.color]?.finish,
   }));
 }
+
+export const BrickMiniIcon: React.FC<{
+  shape: PlanBrick['shape'];
+  hex: string;
+  transparent?: boolean;
+  small?: boolean;
+}> = ({ shape, hex, transparent, small = false }) => {
+  const unit =
+    shape === '4x4'
+      ? small
+        ? 3.5
+        : 4.5
+      : shape === '2x4' || shape === '2x3'
+        ? small
+          ? 4.5
+          : 5.8
+        : small
+          ? 6
+          : 8;
+  const stroke = transparent ? '#9fe4ff' : '#10141a';
+  const fillOpacity = transparent ? 0.65 : 1;
+
+  if (shape === 'slope1x1') {
+    const w = unit + 2;
+    const h = unit + 2;
+    return (
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="shrink-0">
+        <polygon
+          points={`1,${h - 1} ${w - 1},${h - 1} ${w - 1},${h - 3} 3,1 1,1`}
+          fill={hex}
+          fillOpacity={fillOpacity}
+          stroke={stroke}
+          strokeWidth={1}
+        />
+      </svg>
+    );
+  }
+
+  if (shape === 'slope1x2') {
+    const w = unit * 2 + 2;
+    const h = unit + 2;
+    return (
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} className="shrink-0">
+        <polygon
+          points={`1,${h - 1} ${w - 1},${h - 1} ${w - 1},${h - 3} ${unit + 1},1 1,1`}
+          fill={hex}
+          fillOpacity={fillOpacity}
+          stroke={stroke}
+          strokeWidth={1}
+        />
+      </svg>
+    );
+  }
+
+  const cells = SHAPES[shape].cells;
+  const cols = Math.max(...cells.map(c => c[0])) + 1;
+  const rows = Math.max(...cells.map(c => c[1])) + 1;
+  return (
+    <svg width={cols * unit} height={rows * unit} viewBox={`0 0 ${cols * unit} ${rows * unit}`} className="shrink-0">
+      {cells.map(([cx, cz], i) => (
+        <rect
+          key={i}
+          x={cx * unit + 0.5}
+          y={cz * unit + 0.5}
+          width={unit - 1}
+          height={unit - 1}
+          rx={1}
+          fill={hex}
+          fillOpacity={fillOpacity}
+          stroke={stroke}
+          strokeWidth={0.9}
+        />
+      ))}
+    </svg>
+  );
+};
 
 export const LayerGridDiagram: React.FC<{
   layer: number;
@@ -160,6 +263,9 @@ export const InstructionPanel: React.FC<Props> = ({
   onCollapse,
   showStepGuide,
   onToggleStepGuide,
+  manualYawDeg,
+  manualPitchDeg,
+  onRotateManual,
 }) => {
   const [showColorTable, setShowColorTable] = useState(false);
   const matchedSet = useMemo(() => new Set(matchedIndices), [matchedIndices]);
@@ -184,7 +290,7 @@ export const InstructionPanel: React.FC<Props> = ({
   }, [plan]);
 
   return (
-    <aside className="fixed right-3 top-3 bottom-16 w-[316px] max-w-[calc(100vw-24px)] z-10 flex flex-col rounded-xl bg-[#11151b]/95 border border-white/10 text-[#d6dee9] shadow-2xl">
+    <aside className="fixed right-2 sm:right-3 top-2 sm:top-3 bottom-24 sm:bottom-16 w-[288px] sm:w-[316px] max-w-[calc(100vw-16px)] z-20 flex flex-col rounded-xl bg-[#11151b]/95 border border-white/10 text-[#d6dee9] shadow-2xl">
       {/* 標題與快捷工具 */}
       <div className="flex items-center justify-between gap-1.5 px-3 pt-2.5 pb-2 border-b border-white/10">
         <div className="min-w-0">
@@ -323,49 +429,80 @@ export const InstructionPanel: React.FC<Props> = ({
             </button>
           </div>
 
-          {/* 當前步驟所需零件清單（含色號標示） */}
+          {/* 當前步驟所需零件清單（含色號與積木形狀標示） */}
           <div className="flex flex-wrap gap-1.5 mb-2">
             {stepParts.map(pt => (
               <div
                 key={`${pt.shape}_${pt.color}`}
                 className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#0b0e12] border border-white/10 text-[11px] text-[#d4dde8]"
-                title={`${pt.colorName} (#${pt.colorCode})`}
+                title={`${pt.colorName} (#${pt.colorCode}) · ${SHAPES[pt.shape].label}`}
               >
-                <span className="flex items-center">
-                  {Array.from({ length: SHAPES[pt.shape].cells.length }).map((_, i) => (
-                    <i
-                      key={i}
-                      className={`w-2 h-2 block -ml-[1px] first:ml-0 rounded-[1px] ${
-                        pt.transparent ? 'border border-[#9fe4ff]/90 opacity-65' : 'border border-[#10141a]'
-                      }`}
-                      style={{ backgroundColor: pt.hex }}
-                    />
-                  ))}
-                </span>
+                <BrickMiniIcon shape={pt.shape} hex={pt.hex} transparent={pt.transparent} />
                 <span className="font-mono text-[10px] text-[#8da2b8]">#{pt.colorCode}</span>
                 <span className="tabular-nums font-medium">×{pt.count}</span>
               </div>
             ))}
           </div>
 
-          {/* 3D 等角小圖卡片 */}
-          <button
-            type="button"
-            onClick={() => onZoomStep(currentStep)}
-            className="relative w-full aspect-[4/3] rounded-xl bg-[#161c24] border border-white/12 hover:border-[#7fe3ff]/50 transition-colors p-2 group cursor-pointer"
-          >
-            <IsometricStepSvg
-              bricks={currentStep.bricks}
-              prevBricks={currentStep.prevBricks}
-              palette={model.palette}
-              boardW={model.board.w}
-              boardD={model.board.d}
-            />
-            <span className="absolute right-2 bottom-2 flex items-center gap-1 text-[10.5px] text-[#9fb0c4] bg-[#0e1218]/90 px-2 py-0.5 rounded border border-white/10 group-hover:text-white">
-              <Maximize2 className="w-3 h-3" />
-              放大 3D 圖
-            </span>
-          </button>
+          {/* 3D 步驟示意圖（支援拖曳自由旋轉與按鈕轉向） */}
+          <div className="relative w-full rounded-xl bg-[#161c24] border border-white/12 p-2">
+            <div className="flex items-center justify-between gap-1 mb-1.5">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onRotateManual(((manualYawDeg - 45) % 360 + 360) % 360, manualPitchDeg)}
+                  title="向左旋轉 45°"
+                  className="p-1 rounded-md bg-[#0e1218] hover:bg-[#222a36] border border-white/10 text-[#b7c4d4] hover:text-white transition-colors"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRotateManual((manualYawDeg + 45) % 360, manualPitchDeg)}
+                  title="向右旋轉 45°"
+                  className="p-1 rounded-md bg-[#0e1218] hover:bg-[#222a36] border border-white/10 text-[#b7c4d4] hover:text-white transition-colors"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onRotateManual(0, 26)}
+                  title="切到正視角"
+                  className="px-1.5 py-0.5 rounded-md bg-[#0e1218] hover:bg-[#222a36] border border-white/10 text-[10.5px] text-[#9fb0c4] hover:text-white whitespace-nowrap transition-colors"
+                >
+                  正面
+                </button>
+                <span className="text-[10.5px] text-[#7fe3ff] tabular-nums ml-1 whitespace-nowrap">
+                  {formatViewDirection(manualYawDeg)} {Math.round(manualYawDeg)}°
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => onZoomStep(currentStep)}
+                className="flex items-center gap-1 text-[10.5px] text-[#9fb0c4] hover:text-white bg-[#0e1218] px-2 py-0.5 rounded-md border border-white/10 whitespace-nowrap transition-colors"
+              >
+                <Maximize2 className="w-3 h-3" />
+                放大
+              </button>
+            </div>
+            <div className="aspect-[4/3] w-full rounded-lg bg-[#10151c] overflow-hidden">
+              <IsometricStepSvg
+                bricks={currentStep.bricks}
+                prevBricks={currentStep.prevBricks}
+                palette={model.palette}
+                boardW={model.board.w}
+                boardD={model.board.d}
+                yawDeg={manualYawDeg}
+                pitchDeg={manualPitchDeg}
+                interactive
+                onRotateChange={onRotateManual}
+                onClickCanvas={() => onZoomStep(currentStep)}
+              />
+            </div>
+            <div className="mt-1 text-[10px] text-[#7c8a9b] text-center">
+              可直接在圖上拖曳旋轉視角 · 藍三角為模型正面
+            </div>
+          </div>
 
           {/* 步驟快速索引列表 */}
           <div className="mt-2.5 flex-1 overflow-y-auto pr-1 space-y-1">
@@ -437,15 +574,7 @@ export const InstructionPanel: React.FC<Props> = ({
                         key={`${pt.shape}_${pt.color}`}
                         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-[#0e1116] border border-white/10 text-[10px]"
                       >
-                        <span className="flex">
-                          {Array.from({ length: SHAPES[pt.shape].cells.length }).map((_, i) => (
-                            <i
-                              key={i}
-                              className="w-1.5 h-1.5 block border border-[#12161c]"
-                              style={{ backgroundColor: pt.hex }}
-                            />
-                          ))}
-                        </span>
+                        <BrickMiniIcon shape={pt.shape} hex={pt.hex} transparent={pt.transparent} small />
                         ×{pt.count}
                       </span>
                     ))}
